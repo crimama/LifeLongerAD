@@ -1,0 +1,24 @@
+OPTIMIZER:
+  opt_name: Adam
+  lr: 0.005
+  params:
+    betas: 
+    - 0.5
+    - 0.999
+
+TRAIN:
+  epochs: 200
+    
+
+MODEL:
+  method: ReverseDistillation
+  backbone: wide_resnet50_2
+  params:
+    input_size: 
+      - 224
+      - 224
+    layers:
+      - layer1
+      - layer2
+      - layer3
+    anomaly_map_mode: add
