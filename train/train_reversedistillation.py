@@ -7,6 +7,7 @@ import pandas as pd
 import torch
 import torch.nn as nn 
 import torch.nn.functional as F 
+from torch.utils.data import DataLoader 
 from collections import OrderedDict
 
 from utils.metrics import MetricCalculator
@@ -90,14 +91,8 @@ def test(model, dataloader) -> dict:
     # Calculate results of evaluation     
     if dataloader.dataset.name != 'CIFAR10':
         p_results = pix_level.compute()
-    i_results = img_level.compute()
-    
-    # Calculate results of evaluation per each images        
-    if dataloader.dataset.__class__.__name__ == 'MVTecLoco':
-        p_results['loco_auroc'] = loco_auroc(pix_level,dataloader)
-        i_results['loco_auroc'] = loco_auroc(img_level,dataloader)                
-            
-        
+    i_results = img_level.compute()    
+                    
     # logging metrics
     if dataloader.dataset.name != 'CIFAR10':
         _logger.info('Image AUROC: %.3f%%| Pixel AUROC: %.3f%%' % (i_results['auroc'],p_results['auroc']))
@@ -110,9 +105,33 @@ def test(model, dataloader) -> dict:
     
     return test_result 
 
+def task_inference(model, scenario, accelerator, cfg):
+    
+    
+    if scenario.nb_tasks == 1:
+        range_ = range(0,1)
+    else:
+        range_ = range(0,scenario.nb_tasks-1)
+        
+    j_task_result_dict = {} 
+    for j in range_:
+        trainset, _,_,_ = scenario(j,model)
+        trainloader = accelerator.prepare(DataLoader(dataset = trainset, batch_size  = cfg.DATASET.batch_size, num_workers = cfg.DATASET.num_workers, shuffle = True))
+        
+        # j task inference on t model 
+        j_task_result = [] 
+        with torch.no_grad():
+            for idx, (images, _, _) in enumerate(trainloader):
+                outputs = model(images)   
+                score_map = model.get_score_map(outputs).detach().cpu().numpy()
+                j_task_result.append(score_map)                
+        j_task_result = np.mean(np.concatenate(j_task_result))
+        
+        j_task_result_dict[j] = j_task_result 
+    return j_task_result_dict 
 
 def fit(
-    model, trainloader, testloader, optimizer, scheduler, accelerator,
+    model, scenario, testloader, accelerator,
     epochs: int, use_wandb: bool, log_interval: int, seed: int = None, savedir: str = None
     ,cfg=None):
 
@@ -120,54 +139,74 @@ def fit(
     epoch_time_m = AverageMeter()
     end = time.time() 
     
-    for step,  epoch in enumerate(range(epochs)):
-        _logger.info(f'Epoch: {epoch+1}/{epochs}')
+    for t in range(scenario.nb_tasks):
         
-        train_metrics = train(
-            model        = model, 
-            dataloader   = trainloader, 
-            optimizer    = optimizer, 
-            accelerator  = accelerator, 
-            log_interval = log_interval,
-            cfg           = cfg 
-        )                
+        trainset, optimizer, scheduler, epochs = scenario(t,model)
+        trainloader = DataLoader(
+                dataset     = trainset,
+                batch_size  = cfg.DATASET.batch_size,
+                num_workers = cfg.DATASET.num_workers,
+                shuffle     = True 
+            )   
         
-        if scheduler is not None:
-            scheduler.step()
+        model, trainloader, testloader, optimizer, scheduler = accelerator.prepare(model, trainloader,testloader, optimizer, scheduler)
+    
+        for  epoch in range(epochs):
+            _logger.info(f'Epoch: {epoch+1}/{epochs}')
             
-        if epoch%49 == 0:
-            test_metrics = test(
+            train_metrics = train(
                 model        = model, 
-                dataloader   = testloader
+                dataloader   = trainloader, 
+                optimizer    = optimizer, 
+                accelerator  = accelerator, 
+                log_interval = log_interval,
+                cfg           = cfg 
             )
             
-            metric_logging(
-                savedir = savedir, use_wandb = use_wandb, epoch = epoch, step = step,
-                optimizer = optimizer, epoch_time_m = epoch_time_m,
-                train_metrics = train_metrics, test_metrics = test_metrics)        
-
-            epoch_time_m.update(time.time() - end)
-            end = time.time()
-        else:
-            epoch_time_m.update(time.time() - end)
-            end = time.time()
-            
-        if best_score < test_metrics['img_level']['auroc']:
-            best_score = test_metrics['img_level']['auroc']
-            _logger.info(f" New best score : {best_score} | best epoch : {epoch}\n")
-            # torch.save(model.state_dict(), os.path.join(savedir, f'model_best.pt')) 
-            
-    test_metrics = test(
-                model        = model, 
-                dataloader   = testloader
-            )
-            
-    metric_logging(
-        savedir = savedir, use_wandb = use_wandb, epoch = epoch, step = step,
-        optimizer = optimizer, epoch_time_m = epoch_time_m,
-        train_metrics = train_metrics, test_metrics = test_metrics)   
-        
-        
-        # logging 
+            if scheduler is not None:
+                scheduler.step()
                 
-        # checkpoint - save best results and model weights        
+            if epoch%49 == 0:
+                test_metrics = test(
+                        model        = model, 
+                        dataloader   = testloader
+                    )
+                
+                epoch_time_m.update(time.time() - end)
+                end = time.time()
+                metric_logging(
+                    savedir = savedir, use_wandb = use_wandb, epoch = epoch, step = epoch,
+                    optimizer = optimizer, epoch_time_m = epoch_time_m, task=t,
+                    train_metrics = train_metrics, test_metrics = test_metrics
+                    )  
+            
+        # Evaluation t model
+        test_metrics = test(
+            model        = model, 
+            dataloader   = testloader
+        )
+        scenario.auc_result[t] = test_metrics
+        
+        # Evaluation t model on j task                 
+        j_task_result_dict = task_inference(model, scenario, accelerator, cfg)
+        scenario.fm_result[t] = j_task_result_dict
+        
+        # save model parameter at t task 
+        scenario.task_model_list.append(model.parameters()) 
+            
+        epoch_time_m.update(time.time() - end)
+        end = time.time()
+        
+        metric_logging(
+            savedir = savedir, use_wandb = use_wandb, epoch = epoch, step = epoch,
+            optimizer = optimizer, epoch_time_m = epoch_time_m, task=t,
+            train_metrics = train_metrics, test_metrics = test_metrics)        
+
+    
+    # Evaluation for Continual learning 
+    scenario_result = scenario.eval()
+    metric_logging(
+        savedir = savedir, 
+        task = -1,
+        test_metrics = scenario_result
+    )

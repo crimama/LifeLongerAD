@@ -46,20 +46,28 @@ class AverageMeter:
         self.count += n
         self.avg = self.sum / self.count
                           
-def metric_logging(savedir, use_wandb,
-                     epoch, step,epoch_time_m,
-                    optimizer,test_metrics,train_metrics=None):
+def metric_logging(savedir, use_wandb=None,
+                    step=None, epoch_time_m=None, epoch = None,
+                    optimizer=None,test_metrics=None,task=0,train_metrics=None):
     
     metrics = OrderedDict()
-    metrics.update([('epoch', epoch)])
-    metrics.update([('lr',round(optimizer.param_groups[0]['lr'],5))])
+    metrics.update([('task',task)])
+    
+    if epoch is not None:
+        metrics.update([('epoch', epoch)])
+    
+    if optimizer is not None:
+        metrics.update([('lr',round(optimizer.param_groups[0]['lr'],5))])
+        
     if train_metrics is not None:
         metrics.update([('train_' + k, round(v,4)) for k, v in train_metrics.items()])
+        
     metrics.update([
                     # ('test_' + k, round(v,4)) for k, v in test_metrics.items()
                     ('test_metrics',test_metrics)
                     ])
-    metrics.update([('epoch time',round(epoch_time_m.val,4))])
+    if epoch_time_m is not None:
+        metrics.update([('epoch time',round(epoch_time_m.val,4))])
     
     with open(os.path.join(savedir, 'result.txt'),  'a') as f:
         f.write(json.dumps(metrics) + "\n")

@@ -14,6 +14,9 @@ from omegaconf import OmegaConf
 
 from torch.utils.data import DataLoader
 from adamp import AdamP
+
+from ContinualLearning import InstanceIncremental
+
 torch.autograd.set_detect_anomaly(True)
 
 _logger = logging.getLogger('train')
@@ -69,12 +72,12 @@ def run(cfg):
         **cfg.DATASET.get('params',{})
     )
     
-    trainloader = DataLoader(
-        dataset     = trainset,
-        batch_size  = cfg.DATASET.batch_size,
-        num_workers = cfg.DATASET.num_workers,
-        shuffle     = True 
-    )    
+    # trainloader = DataLoader(
+    #     dataset     = trainset,
+    #     batch_size  = cfg.DATASET.batch_size,
+    #     num_workers = cfg.DATASET.num_workers,
+    #     shuffle     = True 
+    # )    
     
     # define test dataloader
     testloader = DataLoader(
@@ -90,33 +93,28 @@ def run(cfg):
                 **cfg.MODEL.params
                 )
     
-    # optimizer 
-    # if cfg.OPTIMIZER.name is not None:
-    # optimizer = __import__('torch.optim',fromlist='optim').__dict__[cfg.OPTIMIZER.opt_name]()    
-    optimizer = AdamP(model.parameters(), lr=cfg.OPTIMIZER.lr, **cfg.OPTIMIZER.params)
-    
-    # scheduler 
-    if cfg.SCHEDULER.name is not None:
-        scheduler = __import__('torch.optim.lr_scheduler', fromlist='lr_scheduler').__dict__[cfg.SCHEDULER.name](optimizer, **cfg.SCHEDULER.params)
-    else:
-        scheduler = None        
-    
+
+    scenario = InstanceIncremental(
+        trainset        = trainset,
+        scheduler       = cfg.SCHEDULER,
+        optimizer       = cfg.OPTIMIZER,
+        nb_tasks        = cfg.CONTINUAL.nb_tasks,
+        init_data_ratio = cfg.CONTINUAL.init_data_ratio,
+        batch_size      = cfg.DATASET.batch_size,
+        epochs          = cfg.TRAIN.epochs
+    )
     
     if cfg.TRAIN.wandb.use:
         wandb.init(name=f'{cfg.DEFAULT.exp_name}', project=cfg.TRAIN.wandb.project_name, config=OmegaConf.to_container(cfg))
     
     # prepare 
-    model, optimizer, trainloader, testloader, scheduler = accelerator.prepare(
-            model, optimizer, trainloader, testloader, scheduler
-        )
                 
         
     __import__(f'train.train_{cfg.MODEL.method.lower()}', fromlist=f'train_{cfg.MODEL.method.lower()}').fit(
             model        = model, 
-            trainloader  = trainloader, 
+            #trainloader  = trainloader, 
+            scenario     = scenario,
             testloader   = testloader, 
-            optimizer    = optimizer, 
-            scheduler    = scheduler,
             accelerator  = accelerator,
             epochs       = cfg.TRAIN.epochs, 
             use_wandb    = cfg.TRAIN.wandb.use,

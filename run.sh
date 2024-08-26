@@ -6,25 +6,21 @@
 # MPDD 'tubes metal_plate connector bracket_white bracket_brown bracket_black'
 gpu_id=$1
 #method_setting='coreinit patchcore reconpatch fastflow rd'
-method_setting='coreinit'
+method_setting='rd'
 
 if [ $gpu_id == '0' ]; then 
-  class_name='capsule cable bottle carpet grid leather'
+  class_name='all'
   default_setting=./configs/default/mvtecad.yaml
-  anomaly_ratio='0.0 0.1 0.2'  
-  Temperature='0.05'
 
 elif [ $gpu_id == '1' ]; then 
-  class_name='metal_nut pill screw tile toothbrush wood zipper'
+  class_name='hazelnut pill screw wood'
   default_setting=./configs/default/mvtecad.yaml
-  anomaly_ratio='0.0 0.1 0.2'  
-  Temperature='0.05'
 
 elif [ $gpu_id == '2' ]; then #
   class_name='1 2 3'
   default_setting=./configs/default/btad.yaml
   anomaly_ratio='0.0'  
-  Temperature='0.1'
+  Temperature='0.1' 
 
 elif [ $gpu_id == '3' ]; then 
   class_name='capsule hazelnut transistor cable bottle carpet grid leather metal_nut pill screw tile toothbrush wood zipper'
@@ -55,17 +51,11 @@ for m in $method_setting
 do
   for c in $class_name
   do
-    for r in $anomaly_ratio
-    do
-      echo "method_setting: $m class_name: $c Temperature: $r"      
-      CUDA_VISIBLE_DEVICES=$gpu_id python main.py \
-      default_setting=$default_setting \
-      model_setting=./configs/model/$m.yaml \
-      DATASET.class_name=$c \
-      DATASET.params.anomaly_ratio=$r \
-      DATASET.params.baseline=False \
-      MODEL.params.temperature=$Temperature \
-      DEFAULT.exp_name=BASELINE_proxy_core_baseline_noisy_dataset
-      done
+    echo "method_setting: $m class_name: $c Temperature: $r"      
+    CUDA_VISIBLE_DEVICES=$gpu_id python main.py \
+    default_setting=$default_setting \
+    model_setting=./configs/model/$m.yaml \
+    DATASET.class_name=$c \
+    DEFAULT.exp_name=pilot_epoch_log
   done
 done 

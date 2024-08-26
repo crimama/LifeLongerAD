@@ -5,9 +5,6 @@ OPTIMIZER:
     betas: 
     - 0.5
     - 0.999
-
-TRAIN:
-  epochs: 200
     
 
 MODEL:
