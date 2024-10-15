@@ -26,7 +26,7 @@ class VISA(Dataset):
             gt           = True 
         )
     '''
-    def __init__(self, df: pd.DataFrame, train_mode:str, transform, gt_transform, gt=True, idx=False):
+    def __init__(self, df: pd.DataFrame, class_name:str, train_mode:str, transform, gt_transform, gt=True, idx=False):
         '''
         train_mode = ['train','valid','test']
         '''
@@ -45,6 +45,7 @@ class VISA(Dataset):
         # Image 
         self.transform = transform         
         self.name = 'VISA'        
+        self.class_name = class_name
         self.idx = idx 
         
     def _get_ground_truth(self,img_dir, img, idx):
@@ -70,19 +71,22 @@ class VISA(Dataset):
         img = img.type(torch.float32)
         label = self.labels[idx]
         
-        if self.gt:
-            gt = self._get_ground_truth(img_dir, img, idx)
-            #gt = self.gt_transform(gt)
-            gt = (gt > 0).float()
-            #gt = gt.type(torch.int64)
-            
-            
-            if self.idx:
-                return img, label, gt, idx
-            else:
-                return img, label, gt
-        
+        if self.train_mode == 'train':
+            return img, img_dir
         else:
-            return img, label 
-        
-        
+            if self.gt:
+                gt = self._get_ground_truth(img_dir, img, idx)
+                #gt = self.gt_transform(gt)
+                gt = (gt > 0).float()
+                #gt = gt.type(torch.int64)
+                
+                
+                if self.idx:
+                    return img, label, gt, idx
+                else:
+                    return img, label, gt
+            
+            else:
+                return img, label 
+            
+            

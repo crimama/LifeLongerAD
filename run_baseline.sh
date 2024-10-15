@@ -5,12 +5,11 @@
 # MVTecLoco 'breakfast_box  juice_bottle  pushpins  screw_bag  splicing_connectors'
 # MPDD 'tubes metal_plate connector bracket_white bracket_brown bracket_black'
 gpu_id=$1
-method_setting='reconpatch'
+method_setting='LANGCAD'
 
 if [ $gpu_id == '0' ]; then #visa 
-  class_name='capsule hazelnut transistor cable bottle carpet grid leather metal_nut pill screw tile toothbrush wood zipper'
+  class_name='capsule'
   default_setting=./configs/default/mvtecad.yaml
-  anomaly_ratio='0.0'  
 
 elif [ $gpu_id == '1' ]; then #visa 
   class_name='candle capsules cashew chewinggum fryum macaroni1 macaroni2 pcb1 pcb2 pcb3 pcb4 pipe_fryum'
@@ -49,14 +48,11 @@ for m in $method_setting
 do
   for c in $class_name
   do
-    for r in $anomaly_ratio
-    do
-      echo "method_setting: $m class_name: $c anomaly_ratio: $r"      
+      echo "method_setting: $m class_name: $c"      
       CUDA_VISIBLE_DEVICES=$gpu_id python main.py \
       default_setting=$default_setting \
       model_setting=./configs/model/$m.yaml \
       DATASET.class_name=$c \
-      DEFAULT.exp_name=BASELINE
-      done
+      DEFAULT.exp_name=trial_text_pool
   done
 done 

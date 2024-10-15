@@ -1,0 +1,45 @@
+DEFAULT:
+  exp_name: 'no_prompts'
+MODEL:
+  method: UCAD
+  backbone: vit_base_patch16_224
+  params:
+    prompt_dim: 768
+    num_blocks: 5
+    key_embedding: fps
+
+
+DATASET:
+  aug_info: 
+    - PatchCore
+  class_names:
+    - grid
+    - carpet
+    - cable
+    - zipper
+    - wood
+    - tile
+    - metal_nut
+    - transistor
+    - bottle
+    - leather
+    - pill
+    - hazelnut
+    - toothbrush
+    - capsule
+    - screw
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

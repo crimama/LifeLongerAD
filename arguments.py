@@ -69,6 +69,7 @@ def jupyter_parser(default_setting:str = None, model_setting:str = None):
     model = OmegaConf.load(model_setting)
     return OmegaConf.merge(default, model)
 
+#! PARSER 
 def parser(jupyter:bool = False, default_setting:str = None, model_setting:str = None):
     
     if jupyter:
@@ -91,25 +92,20 @@ def parser(jupyter:bool = False, default_setting:str = None, model_setting:str =
         pass
     
     #! Continual Setting 
-    if cfg.CONTINUAL.online:
-        cfg.TRAIN.epochs = 1 
-    # else:
-    #     cfg.TRAIN.epochs = int(cfg.TRAIN.epochs/cfg.CONTINUAL.nb_tasks)
+    # if cfg.CONTINUAL.unified:
+    #     cfg.DATASET.class_name = 'all'
         
-    if cfg.CONTINUAL.unified:
-        cfg.DATASET.class_name = 'all'
-        
-    if cfg.DATASET.class_name == 'all':
-        cfg.CONTINUAL.unified = True
+    # if cfg.DATASET.class_name == 'all':
+    #     cfg.CONTINUAL.unified = True
         
         
     
     # Update experiment name
-    if cfg.MODEL.method in ['PatchCore','SoftPatch']:
-        # cfg.DEFAULT.exp_name = f"{cfg.DEFAULT.exp_name}-coreset_ratio_{cfg.MODEL.params.coreset_sampling_ratio}-anomaly_ratio_{cfg.DATASET.params.anomaly_ratio}" 
-        cfg.DEFAULT.exp_name = f"{cfg.DEFAULT.exp_name}-{cfg.MODEL.params.weight_method}-sampling_ratio_{cfg.MODEL.params.sampling_ratio}" 
-    else:
-        cfg.DEFAULT.exp_name = f"{cfg.DEFAULT.exp_name}-online_{cfg.CONTINUAL.online}-unified_{cfg.CONTINUAL.unified}-init_ratio_{cfg.CONTINUAL.init_data_ratio}-nb_tasks_{cfg.CONTINUAL.nb_tasks}"
+    # if cfg.MODEL.method in ['PatchCore','SoftPatch']:
+    #     # cfg.DEFAULT.exp_name = f"{cfg.DEFAULT.exp_name}-coreset_ratio_{cfg.MODEL.params.coreset_sampling_ratio}-anomaly_ratio_{cfg.DATASET.params.anomaly_ratio}" 
+    #     cfg.DEFAULT.exp_name = f"{cfg.DEFAULT.exp_name}-{cfg.MODEL.params.weight_method}-sampling_ratio_{cfg.MODEL.params.sampling_ratio}" 
+    # else:
+    #     cfg.DEFAULT.exp_name = f"{cfg.DEFAULT.exp_name}-online_{cfg.CONTINUAL.online}-unified_{cfg.CONTINUAL.unified}-init_ratio_{cfg.CONTINUAL.init_data_ratio}-nb_tasks_{cfg.CONTINUAL.nb_tasks}"
     
     # Print Experiment name 
     print(f"\n Experiment Name : {cfg.DEFAULT.exp_name}\n")
@@ -122,9 +118,5 @@ def patchcore_arguments(cfg):
         cfg.MODEL.params.device = f"cuda:{os.environ.get('CUDA_VISIBLE_DEVICES', None)}"
     else:
         cfg.MODEL.params.device = 'cuda:0'    
-
-    # threshold for each sampling method 
-    if cfg.MODEL.params.weight_method == 'identity':
-        cfg.MODEL.params.threshold = 1 
         
     return cfg 

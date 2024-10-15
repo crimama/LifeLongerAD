@@ -1,21 +1,36 @@
 DEFAULT:
   seed: 0
   savedir: ./results
-  exp_name: 'Baseline'
+  exp_name: 'MVTecAD_VisA_mix'
 
 DATASET:
   datadir: ../Data
   batch_size: 32
   test_batch_size: 32
-  num_workers: 8
+  num_workers: 0
   dataset_name: MVTecAD  # [AnomalyDataset,MVTecAD]
   aug_info: 
     - Resize
-  class_name: screw
   img_size: 224
   params:
     anomaly_ratio: 0.0
     baseline: True
+  class_names:
+    - grid
+    - carpet
+    - cable
+    - zipper
+    - wood
+    - tile
+    - metal_nut
+    - transistor
+    - bottle
+    - leather
+    - pill
+    - hazelnut
+    - toothbrush
+    - capsule
+    - screw
 
 OPTIMIZER:
   opt_name: Adam
@@ -26,13 +41,13 @@ OPTIMIZER:
     - 0.999
 
 TRAIN:
-  epochs: 200
+  epochs: 1
   grad_accum_steps: 1
   mixed_precision: 'no'
   log_interval: 10
   wandb:
     use: false
-    project_name: ProxyCore
+    project_name: LANGCAD
     
 SCHEDULER: 
   name: null

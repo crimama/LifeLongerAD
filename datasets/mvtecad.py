@@ -26,11 +26,12 @@ class MVTecAD(Dataset):
             gt           = True 
         )
     '''
-    def __init__(self, df: pd.DataFrame, train_mode:str, transform, gt_transform, gt=True, idx=False):
+    def __init__(self, df: pd.DataFrame, class_name:str, train_mode:str, transform, gt_transform, gt=True, idx=False):
         '''
         train_mode = ['train','valid','test']
         '''
         self.df = df 
+        self.class_name = class_name 
         
         # train / test split 
         self.img_dirs = self.df[self.df['train/test'] == train_mode][0].values # column 0 : img_dirs 
@@ -41,11 +42,10 @@ class MVTecAD(Dataset):
         self.gt_transform = gt_transform 
 
         # Image 
-        self.transform = transform 
-        
-        self.name = 'MVTecAD'
-        
+        self.transform = transform         
+        self.name = 'MVTecAD'        
         self.idx = idx 
+        self.train_mode = train_mode
         
     def _get_ground_truth(self, img_dir, img):
         img_dir = img_dir.split('/')
@@ -84,9 +84,12 @@ class MVTecAD(Dataset):
             if self.idx:
                 return img, label, gt, idx
             else:
-                return img, label, gt
+                if self.train_mode == 'train':
+                    return img, img_dir
+                else:
+                    return img, label, gt
         
-        else:
+        else:        
             return img, label 
         
         

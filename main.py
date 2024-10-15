@@ -15,7 +15,6 @@ from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 from adamp import AdamP
 
-from ContinualLearning import InstanceIncremental
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -40,7 +39,6 @@ def run(cfg):
                             cfg.DEFAULT.savedir,
                             cfg.MODEL.method,
                             cfg.DATASET.dataset_name,
-                            str(cfg.DATASET.class_name),
                             cfg.DEFAULT.exp_name,
                             f"seed_{cfg.DEFAULT.seed}"
                             )    
@@ -60,61 +58,68 @@ def run(cfg):
     # set device
     _logger.info('Device: {}'.format(accelerator.device))
 
-    # load dataset
-    trainset, testset = create_dataset(
-        dataset_name  = cfg.DATASET.dataset_name,
-        datadir       = cfg.DATASET.datadir,
-        class_name    = cfg.DATASET.class_name,
-        img_size      = cfg.DATASET.img_size,
-        mean          = cfg.DATASET.mean,
-        std           = cfg.DATASET.std,
-        aug_info      = cfg.DATASET.aug_info,
-        **cfg.DATASET.get('params',{})
-    )
-    
-    # trainloader = DataLoader(
-    #     dataset     = trainset,
-    #     batch_size  = cfg.DATASET.batch_size,
-    #     num_workers = cfg.DATASET.num_workers,
-    #     shuffle     = True 
-    # )    
-    
-    # define test dataloader
-    testloader = DataLoader(
-        dataset     = testset,
-        batch_size  = cfg.DATASET.test_batch_size,
-        num_workers = cfg.DATASET.num_workers,
-        shuffle     = False
-    )
-    
     # model 
+    
     model  = __import__('models').__dict__[cfg.MODEL.method](
-                backbone = cfg.MODEL.backbone,
+                backbone    = cfg.MODEL.backbone,
+                # class_names = cfg.DATASET.class_names, #Todo 여기 부분 다른 모델도 맞춰서 수정 필요 
                 **cfg.MODEL.params
                 )
-    
+        
+    #! LOAD DATASET FOR CONTINUAL LEARNING 
+    class_names = ['wood','cable','chewinggum','grid','pill','pcb2','macaroni2','pcb4','candle','tile','pcb1','pcb3','capsule','fryum','transistor','cashew','metal_nut','carpet','bottle','zipper','pipe_fryum','toothbrush','capsules','leather','hazelnut','screw','macaroni1']
+    dataset = {'wood': 'MVTecAD', 'cable': 'MVTecAD', 'chewinggum': 'VISA', 'grid': 'MVTecAD', 'pill': 'MVTecAD', 'pcb2': 'VISA', 'macaroni2': 'VISA', 'pcb4': 'VISA', 'candle': 'VISA', 'tile': 'MVTecAD', 'pcb1': 'VISA', 'pcb3': 'VISA', 'capsule': 'MVTecAD', 'fryum': 'VISA', 'transistor': 'MVTecAD', 'cashew': 'VISA', 'metal_nut': 'MVTecAD', 'carpet': 'MVTecAD', 'bottle': 'MVTecAD', 'zipper': 'MVTecAD', 'pipe_fryum': 'VISA', 'toothbrush': 'MVTecAD', 'capsules': 'VISA', 'leather': 'MVTecAD', 'hazelnut': 'MVTecAD', 'screw': 'MVTecAD', 'macaroni1': 'VISA'}
+    loader_dict = {}
+    # for cn in cfg.DATASET.class_names:
+    #     trainset, testset = create_dataset(
+    #         dataset_name  = cfg.DATASET.dataset_name,
+    #         datadir       = cfg.DATASET.datadir,
+    #         class_name    = cn,
+    #         img_size      = cfg.DATASET.img_size,
+    #         mean          = cfg.DATASET.mean,
+    #         std           = cfg.DATASET.std,
+    #         aug_info      = cfg.DATASET.aug_info,
+    #         **cfg.DATASET.get('params',{})
+    #     )
+    for cn in class_names:
+        trainset, testset = create_dataset(
+            dataset_name  = dataset[cn],
+            datadir       = cfg.DATASET.datadir,
+            class_name    = cn,
+            img_size      = cfg.DATASET.img_size,
+            mean          = cfg.DATASET.mean,
+            std           = cfg.DATASET.std,
+            aug_info      = cfg.DATASET.aug_info,
+            **cfg.DATASET.get('params',{})
+        )
+        trainloader = DataLoader(
+            dataset     = trainset,
+            batch_size  = cfg.DATASET.batch_size,
+            num_workers = cfg.DATASET.num_workers,
+            shuffle     = True 
+        )    
 
-    scenario = InstanceIncremental(
-        trainset        = trainset,
-        scheduler       = cfg.SCHEDULER,
-        optimizer       = cfg.OPTIMIZER,
-        nb_tasks        = cfg.CONTINUAL.nb_tasks,
-        init_data_ratio = cfg.CONTINUAL.init_data_ratio,
-        batch_size      = cfg.DATASET.batch_size,
-        epochs          = cfg.TRAIN.epochs
-    )
+        testloader = DataLoader(
+                dataset     = testset,
+                batch_size  = cfg.DATASET.batch_size,
+                num_workers = cfg.DATASET.num_workers,
+                shuffle     = False 
+            )    
+        
+        loader_dict[cn] = {'train':trainloader,'test':testloader}
+    
+    
+    # optimizer 
+    # if cfg.OPTIMIZER.name is not None:    
     
     if cfg.TRAIN.wandb.use:
         wandb.init(name=f'{cfg.DEFAULT.exp_name}', project=cfg.TRAIN.wandb.project_name, config=OmegaConf.to_container(cfg))
-    
-    # prepare 
+
                 
         
     __import__(f'train.train_{cfg.MODEL.method.lower()}', fromlist=f'train_{cfg.MODEL.method.lower()}').fit(
             model        = model, 
-            #trainloader  = trainloader, 
-            scenario     = scenario,
-            testloader   = testloader, 
+            loader_dict  = loader_dict,
             accelerator  = accelerator,
             epochs       = cfg.TRAIN.epochs, 
             use_wandb    = cfg.TRAIN.wandb.use,
@@ -126,7 +131,7 @@ def run(cfg):
     
 
 if __name__=='__main__':
-
+    
     # config
     cfg = parser()
     

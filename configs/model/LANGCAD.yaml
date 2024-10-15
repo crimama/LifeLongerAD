@@ -1,0 +1,26 @@
+# DEFAULT:
+#   exp_name: 'CViT_grid_first'
+
+MODEL:
+  method: LANGCAD
+  backbone:
+    # name: ViT-B-32
+    # pretrained: laion400m_e31
+    name: ViT-B-16
+    pretrained: openai
+  params:
+    input_shape:
+      - 3 
+      - 224
+      - 224
+    faiss_num_workers: 4
+    num_layers: 
+      - 3
+      - 7
+      - 11
+    sampling_ratio: 0.1
+
+
+DATASET:
+  aug_info: 
+    - PatchCore
