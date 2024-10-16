@@ -5,7 +5,8 @@
 # MVTecLoco 'breakfast_box  juice_bottle  pushpins  screw_bag  splicing_connectors'
 # MPDD 'tubes metal_plate connector bracket_white bracket_brown bracket_black'
 gpu_id=$1
-method_setting='LANGCAD'
+# method_setting='LANGCAD'
+method_setting='CViT'
 
 if [ $gpu_id == '0' ]; then #visa 
   default_setting=./configs/default/mvtecad.yaml

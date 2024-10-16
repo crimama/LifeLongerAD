@@ -26,7 +26,8 @@ class MVTecAD(Dataset):
             gt           = True 
         )
     '''
-    def __init__(self, df: pd.DataFrame, class_name:str, train_mode:str, transform, gt_transform, gt=True, idx=False):
+    def __init__(self, df: pd.DataFrame, class_name:str, train_mode:str, transform, gt_transform, 
+                 gt=True, idx=False, text=True):
         '''
         train_mode = ['train','valid','test']
         '''
@@ -47,17 +48,18 @@ class MVTecAD(Dataset):
         self.idx = idx 
         self.train_mode = train_mode
         
+        # Text 
+        self.text_format = ["a photo of {}", "a picture of {}", "a image of {}"]
+        
     def _get_ground_truth(self, img_dir, img):
         img_dir = img_dir.split('/')
         if img_dir[-2] !='good':
             img_dir[-3] = 'ground_truth'
             img_dir[-1] = img_dir[-1].split('.')[0] + '_mask.png'
             img_dir = '/'.join(img_dir)
-            # image = cv2.imread(img_dir)
             gt = Image.open(img_dir)
             gt = self.gt_transform(gt)
         else:
-            # image = np.zeros_like(torch.permute(img,dims=(1,2,0))).astype(np.uint8)
             gt = torch.zeros([1, *img.size()[1:]])
         # gt = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
@@ -74,22 +76,14 @@ class MVTecAD(Dataset):
         img = img.type(torch.float32)
         label = self.labels[idx]
         
-        if self.gt:
+        if self.gt: # Test
             gt = self._get_ground_truth(img_dir,img)
-            #gt = self.gt_transform(gt)
-            gt = (gt > 0).float()
-            #gt = gt.type(torch.int64)
+            gt = (gt > 0).float()            
             
-            
-            if self.idx:
-                return img, label, gt, idx
-            else:
-                if self.train_mode == 'train':
-                    return img, img_dir
-                else:
-                    return img, label, gt
+            return img, label, gt
         
-        else:        
-            return img, label 
+        else: # Train 
+            text = np.random.choice(self.text_format).format(self.class_name)
+            return img, label, text 
         
         

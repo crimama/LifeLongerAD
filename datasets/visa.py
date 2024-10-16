@@ -72,7 +72,7 @@ class VISA(Dataset):
         label = self.labels[idx]
         
         if self.train_mode == 'train':
-            return img, img_dir
+            return img, img_dir, label
         else:
             if self.gt:
                 gt = self._get_ground_truth(img_dir, img, idx)

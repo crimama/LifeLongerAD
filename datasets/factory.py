@@ -26,7 +26,7 @@ def load_VISA(dataset_name: str, datadir: str, class_name: str, img_size: int, m
     test_transform  = test_augmentation(img_size=img_size, mean=mean, std=std, aug_info=aug_info)
     gt_transform    = gt_augmentation(img_size=img_size, aug_info=aug_info)
 
-    trainset = VISA(df=df, class_name = class_name, train_mode='train', transform=train_transform, gt_transform=gt_transform, gt=True)
+    trainset = VISA(df=df, class_name = class_name, train_mode='train', transform=train_transform, gt_transform=gt_transform, gt=False)
     testset  = VISA(df=df, class_name = class_name, train_mode='test', transform=test_transform, gt_transform=gt_transform, gt=True)
     
     return trainset, testset
@@ -38,7 +38,7 @@ def load_MVTecAD(dataset_name: str, datadir: str, class_name: str, img_size: int
     test_transform  = test_augmentation(img_size=img_size, mean=mean, std=std, aug_info=aug_info)
     gt_transform    = gt_augmentation(img_size=img_size, aug_info=aug_info)
 
-    trainset = MVTecAD(df=df, class_name = class_name, train_mode='train', transform=train_transform, gt_transform=gt_transform, gt=True)
+    trainset = MVTecAD(df=df, class_name = class_name, train_mode='train', transform=train_transform, gt_transform=gt_transform, gt=False)
     testset  = MVTecAD(df=df, class_name = class_name, train_mode='test', transform=test_transform, gt_transform=gt_transform, gt=True)
     
     return trainset, testset

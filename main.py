@@ -14,7 +14,8 @@ from omegaconf import OmegaConf
 
 from torch.utils.data import DataLoader
 from adamp import AdamP
-
+import warnings
+warnings.filterwarnings('ignore')
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -67,23 +68,10 @@ def run(cfg):
                 )
         
     #! LOAD DATASET FOR CONTINUAL LEARNING 
-    class_names = ['wood','cable','chewinggum','grid','pill','pcb2','macaroni2','pcb4','candle','tile','pcb1','pcb3','capsule','fryum','transistor','cashew','metal_nut','carpet','bottle','zipper','pipe_fryum','toothbrush','capsules','leather','hazelnut','screw','macaroni1']
-    dataset = {'wood': 'MVTecAD', 'cable': 'MVTecAD', 'chewinggum': 'VISA', 'grid': 'MVTecAD', 'pill': 'MVTecAD', 'pcb2': 'VISA', 'macaroni2': 'VISA', 'pcb4': 'VISA', 'candle': 'VISA', 'tile': 'MVTecAD', 'pcb1': 'VISA', 'pcb3': 'VISA', 'capsule': 'MVTecAD', 'fryum': 'VISA', 'transistor': 'MVTecAD', 'cashew': 'VISA', 'metal_nut': 'MVTecAD', 'carpet': 'MVTecAD', 'bottle': 'MVTecAD', 'zipper': 'MVTecAD', 'pipe_fryum': 'VISA', 'toothbrush': 'MVTecAD', 'capsules': 'VISA', 'leather': 'MVTecAD', 'hazelnut': 'MVTecAD', 'screw': 'MVTecAD', 'macaroni1': 'VISA'}
     loader_dict = {}
-    # for cn in cfg.DATASET.class_names:
-    #     trainset, testset = create_dataset(
-    #         dataset_name  = cfg.DATASET.dataset_name,
-    #         datadir       = cfg.DATASET.datadir,
-    #         class_name    = cn,
-    #         img_size      = cfg.DATASET.img_size,
-    #         mean          = cfg.DATASET.mean,
-    #         std           = cfg.DATASET.std,
-    #         aug_info      = cfg.DATASET.aug_info,
-    #         **cfg.DATASET.get('params',{})
-    #     )
-    for cn in class_names:
+    for cn in cfg.DATASET.class_names:
         trainset, testset = create_dataset(
-            dataset_name  = dataset[cn],
+            dataset_name  = cfg.DATASET.dataset_name,
             datadir       = cfg.DATASET.datadir,
             class_name    = cn,
             img_size      = cfg.DATASET.img_size,
@@ -92,6 +80,19 @@ def run(cfg):
             aug_info      = cfg.DATASET.aug_info,
             **cfg.DATASET.get('params',{})
         )
+    # class_names = ['wood','cable','chewinggum','grid','pill','pcb2','macaroni2','pcb4','candle','tile','pcb1','pcb3','capsule','fryum','transistor','cashew','metal_nut','carpet','bottle','zipper','pipe_fryum','toothbrush','capsules','leather','hazelnut','screw','macaroni1']
+    # dataset = {'wood': 'MVTecAD', 'cable': 'MVTecAD', 'chewinggum': 'VISA', 'grid': 'MVTecAD', 'pill': 'MVTecAD', 'pcb2': 'VISA', 'macaroni2': 'VISA', 'pcb4': 'VISA', 'candle': 'VISA', 'tile': 'MVTecAD', 'pcb1': 'VISA', 'pcb3': 'VISA', 'capsule': 'MVTecAD', 'fryum': 'VISA', 'transistor': 'MVTecAD', 'cashew': 'VISA', 'metal_nut': 'MVTecAD', 'carpet': 'MVTecAD', 'bottle': 'MVTecAD', 'zipper': 'MVTecAD', 'pipe_fryum': 'VISA', 'toothbrush': 'MVTecAD', 'capsules': 'VISA', 'leather': 'MVTecAD', 'hazelnut': 'MVTecAD', 'screw': 'MVTecAD', 'macaroni1': 'VISA'}
+    # for cn in class_names:
+    #     trainset, testset = create_dataset(
+    #         dataset_name  = dataset[cn],
+    #         datadir       = cfg.DATASET.datadir,
+    #         class_name    = cn,
+    #         img_size      = cfg.DATASET.img_size,
+    #         mean          = cfg.DATASET.mean,
+    #         std           = cfg.DATASET.std,
+    #         aug_info      = cfg.DATASET.aug_info,
+    #         **cfg.DATASET.get('params',{})
+    #     )
         trainloader = DataLoader(
             dataset     = trainset,
             batch_size  = cfg.DATASET.batch_size,

@@ -135,7 +135,7 @@ class Prompts(nn.Module):
             nn.Parameter(torch.nn.init.uniform_(torch.randn(prompt_dim), -1, 1), requires_grad=True)
             for _ in range(num_blocks)
         ])
-        
+         
     def __len__(self):
         return len(self.prompts)
     

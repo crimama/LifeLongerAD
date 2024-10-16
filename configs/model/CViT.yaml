@@ -1,9 +1,9 @@
 DEFAULT:
-  exp_name: 'LANGCAD_prompt_lang_baseline_3rdtxtembedding'
-  description: 'clip loss with 3rd text block embedding'
+  exp_name: 'CViT_3first_fmmetricadded'
+  description: 'cvit baseline with fm metric added'
 
 MODEL:
-  method: LANGCAD
+  method: CViT
   backbone:
     # name: ViT-B-32
     # pretrained: laion400m_e31
@@ -17,21 +17,11 @@ MODEL:
     faiss_num_workers: 4
     num_layers: 
       - 3
+      # - 7 
+      # - 11
     sampling_ratio: 0.1
 
 
 DATASET:
   aug_info: 
     - PatchCore
-
-
-OPTIMIZER:
-  opt_name: Adam
-  lr: 0.005
-  params:
-    betas: 
-    - 0.5
-    - 0.999
-
-TRAIN:
-  epochs: 100
