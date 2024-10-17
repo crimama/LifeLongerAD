@@ -1,6 +1,6 @@
 DEFAULT:
-  exp_name: 'LANGCAD_prompt_lang_baseline_3rdtxtembedding'
-  description: 'clip loss with 3rd text block embedding'
+  exp_name: 'kiie_method301_cvit_prompt_pseudotext_priortaskneg'
+  description: 'cvit - prompt - lang with pre created text using gpt4o with contrasitve learning using prior task'
 
 MODEL:
   method: LANGCAD

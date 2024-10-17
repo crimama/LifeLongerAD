@@ -30,11 +30,11 @@ def train(model, prompts, dataloader, optimizer, scheduler, accelerator, log_int
     model.train()
     used_memory = log_vram()
     _logger.info(f'current memory : {used_memory}')
-    for idx, (images, labels, text) in enumerate(dataloader):
+    for idx, (images, positive, negative) in enumerate(dataloader):
         data_time_m.update(time.time() - end)
         
         # predict        
-        loss = model(images, text, prompts)
+        loss = model(images, positive, negative, prompts)
         
         # loss backward
         optimizer.zero_grad()
@@ -148,22 +148,28 @@ def fit(
         model, prompts, trainloader, testloader, optimizer, scheduler = accelerator.prepare(model, prompts, trainloader, testloader, optimizer, scheduler)
         
         # Train 
-        for step,  epoch in enumerate(range(epochs)):
-            _logger.info(f'Epoch: {epoch+1}/{epochs}')
-            # train one epoch 
-            train(
-                model        = model, 
-                prompts      = prompts, 
-                dataloader   = trainloader, 
-                optimizer    = optimizer, 
-                scheduler    = scheduler,
-                accelerator  = accelerator, 
-                log_interval = log_interval,
-                cfg           = cfg 
-            )                
-
+        if i ==0:
+            epoch = 0
+            step = 0 
             epoch_time_m.update(time.time() - end)
             end = time.time()
+        else:
+            for step,  epoch in enumerate(range(epochs)):
+                _logger.info(f'Epoch: {epoch+1}/{epochs}')
+                # train one epoch 
+                train(
+                    model        = model, 
+                    prompts      = prompts, 
+                    dataloader   = trainloader, 
+                    optimizer    = optimizer, 
+                    scheduler    = scheduler,
+                    accelerator  = accelerator, 
+                    log_interval = log_interval,
+                    cfg           = cfg 
+                )                
+
+                epoch_time_m.update(time.time() - end)
+                end = time.time()
             
             # scheduler.step()
         # Create knowledge and save 

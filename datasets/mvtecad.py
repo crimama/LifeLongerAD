@@ -1,6 +1,6 @@
 from glob import glob 
 import os 
-
+import random 
 import numpy as np 
 import pandas as pd 
 
@@ -26,7 +26,7 @@ class MVTecAD(Dataset):
             gt           = True 
         )
     '''
-    def __init__(self, df: pd.DataFrame, class_name:str, train_mode:str, transform, gt_transform, 
+    def __init__(self, df: pd.DataFrame, class_name:str, caption_dict:dict, train_mode:str, transform, gt_transform, 
                  gt=True, idx=False, text=True):
         '''
         train_mode = ['train','valid','test']
@@ -50,6 +50,24 @@ class MVTecAD(Dataset):
         
         # Text 
         self.text_format = ["a photo of {}", "a picture of {}", "a image of {}"]
+        self.positive, self.negative = self.caption_split(caption_dict, class_name)
+        np.random.shuffle(self.negative)
+    def caption_split(self, caption_dict, class_name):
+        '''
+            Output 
+                positive : dict 
+                negative : list 
+        '''
+        task_order = list(caption_dict.keys()).index(class_name)
+        self.task_order = task_order 
+        negative = [] 
+        for cn in list(caption_dict.keys())[:task_order]:
+            caption = caption_dict[cn].values()
+            negative.extend(caption)
+            
+        positive = caption_dict[class_name]
+        return positive, negative 
+        
         
     def _get_ground_truth(self, img_dir, img):
         img_dir = img_dir.split('/')
@@ -61,16 +79,14 @@ class MVTecAD(Dataset):
             gt = self.gt_transform(gt)
         else:
             gt = torch.zeros([1, *img.size()[1:]])
-        # gt = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
         return gt
         
     def __len__(self):
         return len(self.img_dirs)
     
     def __getitem__(self,idx):
-        img_dir = self.img_dirs[idx]
-        # img = cv2.imread(img_dir)
+        img_dir = self.img_dirs[idx]        
+        
         img = Image.open(img_dir).convert('RGB')     
         img = self.transform(img)
         img = img.type(torch.float32)
@@ -83,7 +99,21 @@ class MVTecAD(Dataset):
             return img, label, gt
         
         else: # Train 
-            text = np.random.choice(self.text_format).format(self.class_name)
-            return img, label, text 
+            if self.task_order == 0:
+                negative_text = np.random.choice(self.text_format).format(self.class_name)
+                positive_text = "a photo of {}".format(self.class_name)
+            else:
+                data_id = img_dir.split('/')[-1].strip('.png')
+                positive_text = self.positive[data_id]
+                # negative_text = self.negative[idx]
+                negative_text = random.sample(self.negative,1)[0]
+            return img, positive_text, negative_text
+        
+        
+        #! method 301 방식 
+        # else:
+        #     data_id = img_dir.split('/')[-1].strip('.png')
+        #     positive_text = self.positive[data_id]               
+        #     return img, label, positive_text 
         
         

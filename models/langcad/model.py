@@ -88,18 +88,8 @@ class LANGCAD(nn.Module):
     def create_prompts(self):
         return Prompts(num_blocks = self.num_layers, num_prompts = self.num_prompts, prompt_dim = self.prompt_dim)
     
-    # def _embed_text(self, text:str) -> torch.Tensor:
-    #     with torch.no_grad():
-    #         text = self.tokenizer(text).to(self.device)
-
-    #         cast_dtype = self.encoders.transformer.get_cast_dtype()
-
-    #         x = self.encoders.token_embedding(text).to(cast_dtype)
-    #         x = x + self.encoders.positional_embedding.to(cast_dtype)
-    #         x - self.encoders.transformer(x, attn_mask=self.encoders.attn_mask)
-    #         x = self.encoders.ln_final(x)                    
-    #     return x
-    def _embed_text(self, text: str) -> torch.Tensor:
+    #! last embedding 사용 
+    def _embed_text(self, text:str) -> torch.Tensor:
         with torch.no_grad():
             text = self.tokenizer(text).to(self.device)
 
@@ -107,12 +97,25 @@ class LANGCAD(nn.Module):
 
             x = self.encoders.token_embedding(text).to(cast_dtype)
             x = x + self.encoders.positional_embedding.to(cast_dtype)
-            for i, blk in enumerate(self.encoders.transformer.resblocks):
-                x = blk(x, attn_mask=self.encoders.attn_mask)
-                if i == 2:  # 3번째 resblocks에서의 feature를 return
-                    break
-            x = self.encoders.ln_final(x)
+            x - self.encoders.transformer(x, attn_mask=self.encoders.attn_mask)
+            x = self.encoders.ln_final(x)                    
         return x
+    
+    #! 중간 block에서 빼기 
+    # def _embed_text(self, text: str) -> torch.Tensor:
+    #     with torch.no_grad():
+    #         text = self.tokenizer(text).to(self.device)
+
+    #         cast_dtype = self.encoders.transformer.get_cast_dtype()
+
+    #         x = self.encoders.token_embedding(text).to(cast_dtype)
+    #         x = x + self.encoders.positional_embedding.to(cast_dtype)
+    #         for i, blk in enumerate(self.encoders.transformer.resblocks):
+    #             x = blk(x, attn_mask=self.encoders.attn_mask)
+    #             if i == 2:  # 3번째 resblocks에서의 feature를 return
+    #                 break
+    #         x = self.encoders.ln_final(x)
+    #     return x
 
     #! prompt 중간에 끼워 넣는 방식 
     def _embed_img(self, img, prompts = None):
@@ -189,14 +192,22 @@ class LANGCAD(nn.Module):
         else:
             return image_features 
     
-    def forward(self, img:torch.Tensor, text:list, prompts=None):
+    #! def forward(self, img:torch.Tensor, positive:list, prompts=None):
+    def forward(self, img:torch.Tensor, positive:list, negative:list, prompts=None):
         visual_features = self._embed_img(img, prompts)
         visual_features = visual_features.mean(dim=1)@self.proj
         
-        text_features = self._embed_text(text)
-        text_features = text_features.mean(dim=1)
+        # text_features = self._embed_text(positive)
+        # text_features = text_features.mean(dim=1)
         
-        loss = self.criterion(visual_features, text_features)
+        pos_text_features = self._embed_text(positive)
+        pos_text_features = pos_text_features.mean(dim=1)
+        
+        neg_text_features = self._embed_text(negative)
+        neg_text_features = neg_text_features.mean(dim=1)
+        
+        # loss = self.criterion(visual_features, text_features)
+        loss = self.criterion(visual_features, pos_text_features, neg_text_features)
         return loss 
     
     @torch.no_grad()
@@ -230,7 +241,6 @@ class LANGCAD(nn.Module):
                 
         return score, img_score, pixel_score
     
-    
 class ClipLoss(nn.Module):
     def __init__(
             self,
@@ -262,18 +272,75 @@ class ClipLoss(nn.Module):
         
         return logits_per_image, logits_per_text
 
-    def forward(self, image_features, text_features, logit_scale=1/0.07, output_dict=False):
+    def forward(self, image_features, pos_text_features, neg_text_features, logit_scale=1/0.07, output_dict=False):
         device = image_features.device
-        logits_per_image, logits_per_text = self.get_logits(image_features, text_features, logit_scale)
-
+        
+        # Positive logits (image and matching positive text)
+        logits_per_image, logits_per_text = self.get_logits(image_features, pos_text_features, logit_scale)
         labels = self.get_ground_truth(device, logits_per_image.shape[0])
-
-        total_loss = (
+        
+        contrastive_loss = (
             F.cross_entropy(logits_per_image, labels) +
             F.cross_entropy(logits_per_text, labels)
         ) / 2
+        
+        # Negative logits (image and negative text)
+        neg_logits_per_image = logit_scale * image_features @ neg_text_features.T
+        neg_labels = torch.full((neg_logits_per_image.shape[0],), -1, device=device, dtype=torch.long)
+        
+        negative_loss = F.margin_ranking_loss(
+            neg_logits_per_image, torch.zeros_like(neg_logits_per_image), neg_labels, margin=0.1
+        )
+        
+        total_loss = contrastive_loss + negative_loss
 
         return {"contrastive_loss": total_loss} if output_dict else total_loss
+
+
+#! Baseline clip loss (kiie method 2)  
+# class ClipLoss(nn.Module):
+#     def __init__(
+#             self,
+#             local_loss=False,
+#             gather_with_grad=False,
+#             cache_labels=False,
+#     ):
+#         super().__init__()
+#         self.local_loss = local_loss
+#         self.gather_with_grad = gather_with_grad
+#         self.cache_labels = cache_labels
+
+#         self.prev_num_logits = 0
+#         self.labels = {}
+
+#     def get_ground_truth(self, device, num_logits) -> torch.Tensor:
+#         if self.prev_num_logits != num_logits or device not in self.labels:
+#             labels = torch.arange(num_logits, device=device, dtype=torch.long)
+#             if self.cache_labels:
+#                 self.labels[device] = labels
+#                 self.prev_num_logits = num_logits
+#         else:
+#             labels = self.labels[device]
+#         return labels
+
+#     def get_logits(self, image_features, text_features, logit_scale):
+#         logits_per_image = logit_scale * image_features @ text_features.T
+#         logits_per_text = logit_scale * text_features @ image_features.T
+        
+#         return logits_per_image, logits_per_text
+
+#     def forward(self, image_features, text_features, logit_scale=1/0.07, output_dict=False):
+#         device = image_features.device
+#         logits_per_image, logits_per_text = self.get_logits(image_features, text_features, logit_scale)
+
+#         labels = self.get_ground_truth(device, logits_per_image.shape[0])
+
+#         total_loss = (
+#             F.cross_entropy(logits_per_image, labels) +
+#             F.cross_entropy(logits_per_text, labels)
+#         ) / 2
+
+#         return {"contrastive_loss": total_loss} if output_dict else total_loss
     
     
 class Prompts(nn.Module):
