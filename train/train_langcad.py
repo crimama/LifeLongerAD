@@ -188,7 +188,7 @@ def fit(
             test_metrics = test_metrics,
             class_name = class_name, current_class_name = class_name,
             **{'task_agnostic' : 'specific'}
-            )   
+            ) 
         
         # Task-agnostic inference 
         ta_class_name = model.pool.retrieve_key(model, testloader)
@@ -209,13 +209,14 @@ def fit(
             **{'task_agnostic' : 'agnostic'}
             )  
 
+    # agnostic last 
     for i, (class_name, class_loader_dict) in enumerate(loader_dict.items()):
         testloader = loader_dict[class_name]['test']
         testloader = accelerator.prepare(testloader)
         
         ta_class_name = model.pool.retrieve_key(model, testloader)
         knowledge = model.pool.knowledge[ta_class_name]
-        prompts = model.pool.prompts[ta_class_name].to(accelerator.device)
+        prompts = model.pool.prompts[ta_class_name].to(accelerator.device) #! 이 부분 수정 필요 
         prompts = accelerator.prepare(prompts)
         
         test_metrics = test(
