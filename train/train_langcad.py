@@ -91,6 +91,38 @@ def test(model, prompts, dataloader, class_name:str=None, knowledge=None) -> dic
     test_result.update([('pix_level', p_results)])    
     return test_result 
 
+    
+def test_agnostic(model, prompts, dataloader, device, class_name:str=None, knowledge=None) -> dict:
+    from utils.metrics import MetricCalculator, loco_auroc
+    
+    model.eval()
+    img_level = MetricCalculator(metric_list = ['auroc','average_precision'])
+    pix_level = MetricCalculator(metric_list = ['auroc','average_precision'])     
+
+    #! Knowledge 
+    model.anomaly_scorer.fit([knowledge])    
+    #! Inference     
+    for idx, (images, labels, gts) in enumerate(dataloader):
+
+        with torch.no_grad():
+            features = model.embed(images).detach().cpu().numpy()
+            query_features = np.mean(features,axis=(0,1))
+
+            prompts = model.pool.retrieve_prompts(prompts, query_features).to(device)
+            
+            _, score, score_map = model.predict(images, prompts)
+                
+        # Stack Scoring for metrics 
+        pix_level.update(score_map,gts.type(torch.int))
+        img_level.update(score, labels.type(torch.int))
+            
+    i_results, p_results = img_level.compute(), pix_level.compute()
+    _logger.info('Image AUROC: %.3f%%| Pixel AUROC: %.3f%%' % (i_results['auroc'],p_results['auroc']))
+        
+    test_result = OrderedDict(img_level = i_results)
+    test_result.update([('pix_level', p_results)])    
+    return test_result 
+
 def create_knowledge(model, prompts, trainloader):
     features_bank = [] 
     model.eval()
@@ -103,12 +135,15 @@ def create_knowledge(model, prompts, trainloader):
     
     # knowledge & key save 
     class_name = trainloader.dataset.class_name
-    model.pool.get_knowledge(class_name = class_name , 
-                             knowledge  = sampled_features)
-    
+    knowledge_pool = model.pool.get_knowledge(class_name = class_name , 
+                                            knowledge  = sampled_features)
+    _logger.info(f"knowledge 크기 : {len(knowledge_pool)}")
     # prompts save 
-    model.pool.prompts[class_name] = prompts.to('cpu')
-    return sampled_features
+    # model.pool.prompts[class_name] = prompts.to('cpu')
+    model.pool.prompts.extend(
+        prompts['3'].detach().cpu().numpy()
+    )
+    return knowledge_pool, sampled_features
 
 
 def fit(
@@ -148,7 +183,7 @@ def fit(
         model, prompts, trainloader, testloader, optimizer, scheduler = accelerator.prepare(model, prompts, trainloader, testloader, optimizer, scheduler)
         
         # Train 
-        if i ==0:
+        if i == 0:
             epoch = 0
             step = 0 
             epoch_time_m.update(time.time() - end)
@@ -173,14 +208,14 @@ def fit(
             
             # scheduler.step()
         # Create knowledge and save 
-        knowledge = create_knowledge(model, prompts, trainloader)
+        knowledge_pool, class_features = create_knowledge(model, prompts, trainloader)
                 
         # Task-specific inference 
         test_metrics = test(
                     model        = model, 
                     prompts      = prompts.to(accelerator.device), 
                     dataloader   = testloader,
-                    knowledge    = knowledge
+                    knowledge    = class_features
                 )
         metric_logging(
             savedir = savedir, use_wandb = use_wandb, epoch = epoch, step = step,
@@ -191,21 +226,19 @@ def fit(
             ) 
         
         # Task-agnostic inference 
-        ta_class_name = model.pool.retrieve_key(model, testloader)
-        knowledge = model.pool.knowledge[ta_class_name]
-        prompts = model.pool.prompts[ta_class_name].to(accelerator.device)
-        test_metrics = test(
+        test_metrics = test_agnostic(
                     model        = model, 
                     prompts      = prompts, 
+                    device       = accelerator.device,
                     dataloader   = testloader,
-                    knowledge    = knowledge 
+                    knowledge    = np.array(knowledge_pool) 
                 )
         
         metric_logging(
             savedir = savedir, use_wandb = use_wandb, epoch = epoch, step = step,
             optimizer = optimizer, epoch_time_m = epoch_time_m,
             test_metrics = test_metrics,
-            class_name = ta_class_name, current_class_name = class_name,
+            class_name = 'None', current_class_name = class_name,
             **{'task_agnostic' : 'agnostic'}
             )  
 
@@ -214,23 +247,19 @@ def fit(
         testloader = loader_dict[class_name]['test']
         testloader = accelerator.prepare(testloader)
         
-        ta_class_name = model.pool.retrieve_key(model, testloader)
-        knowledge = model.pool.knowledge[ta_class_name]
-        prompts = model.pool.prompts[ta_class_name].to(accelerator.device) #! 이 부분 수정 필요 
-        prompts = accelerator.prepare(prompts)
-        
-        test_metrics = test(
+        test_metrics = test_agnostic(
             model        = model, 
             prompts      = prompts, 
+            device       = accelerator.device,
             dataloader   = testloader,
-            knowledge    = knowledge 
+            knowledge    = np.array(knowledge_pool)  
         )
         
         metric_logging(
             savedir = savedir, use_wandb = use_wandb, epoch = epoch, step = step,
             optimizer = optimizer, epoch_time_m = epoch_time_m,
             test_metrics = test_metrics,
-            class_name = ta_class_name, current_class_name = class_name,
+            class_name = 'None', current_class_name = class_name,
             **{'task_agnostic' : 'agnostic-last'}
             )  
         

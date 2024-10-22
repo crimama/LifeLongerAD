@@ -1,6 +1,6 @@
 DEFAULT:
-  exp_name: 'kiie_method301_cvit_prompt_pseudotext_priortaskneg'
-  description: 'cvit - prompt - lang with pre created text using gpt4o with contrasitve learning using prior task'
+  exp_name: 'temp'
+  description: 'ablation : method 601 에 pre-task negative sample 제외'
 
 MODEL:
   method: LANGCAD
@@ -18,6 +18,7 @@ MODEL:
     num_layers: 
       - 3
     sampling_ratio: 0.1
+    num_prompts: 6
 
 
 DATASET:

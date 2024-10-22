@@ -61,10 +61,11 @@ class MVTecAD(Dataset):
         task_order = list(caption_dict.keys()).index(class_name)
         self.task_order = task_order 
         negative = [] 
+        self.negative_class = [] 
         for cn in list(caption_dict.keys())[:task_order]:
             caption = caption_dict[cn].values()
             negative.extend(caption)
-            
+            self.negative_class.append(cn)
         positive = caption_dict[class_name]
         return positive, negative 
         

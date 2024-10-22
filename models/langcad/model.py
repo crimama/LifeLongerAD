@@ -1,5 +1,6 @@
 from .sampler import ApproximateGreedyCoresetSampler
 from .common import PatchMaker, NearestNeighbourScorer, RescaleSegmentor, FaissNN
+from sklearn.metrics.pairwise import cosine_similarity
 import torch 
 import torch.nn as nn 
 import torch.nn.functional as F 
@@ -13,14 +14,16 @@ def _expand_token(token, batch_size: int):
 class POOL:
     def __init__(self):
         self.key = {} 
-        self.knowledge = {} 
-        self.prompts = {}
+        self.knowledge = [] 
+        self.prompts = []
 
         
     def get_knowledge(self, class_name:str=None, knowledge=None):
         # key save 
         self.key[class_name] = np.mean(knowledge,axis=0)
-        self.knowledge[class_name] = knowledge
+        # self.knowledge[class_name] = knowledge
+        self.knowledge.extend(knowledge)
+        return self.knowledge
 
     def retrieve_key(self, model, testloader):
         query = [] 
@@ -34,7 +37,25 @@ class POOL:
         class_index = np.argmin(np.linalg.norm(query-key,axis=-1))    
         class_name = list(self.key.keys())[class_index]
         return class_name 
+    
+    def retrieve_prompts(self, prompts, query_features:np.ndarray):
+        '''
+            저장해 있는 prompts 파라미터들 중 top k 선택 후 
+            input으로 들어온 prompt의 파라미터를 바꿔준 뒤 return 
+            일단 feature block은 3 한개로 고정하는 것으로 진행 
+        '''
+        key_prompt = np.vstack(self.prompts) # pool 에 저장되어 있는 prompts 
         
+        similarities = cosine_similarity(
+            query_features.reshape(1,-1),
+            key_prompt
+        )
+        k = prompts.num_prompts  
+        top_k_indices = np.argsort(similarities)[0][-k:][::-1]  # 유사도가 높은 순으로 정렬
+        prompts_parms = [self.prompts[i] for i in top_k_indices]
+        prompts.prompts['3'] = nn.Parameter(torch.Tensor(prompts_parms)) # key : block 번호 
+        return prompts 
+    
 class LANGCAD(nn.Module):
     def __init__(
         self,
@@ -272,11 +293,10 @@ class ClipLoss(nn.Module):
         
         return logits_per_image, logits_per_text
 
-    def forward(self, image_features, pos_text_features, neg_text_features, logit_scale=1/0.07, output_dict=False):
+    def forward(self, image_features, text_features, neg_text_features, logit_scale=1/0.07, output_dict=False):
         device = image_features.device
         
-        # Positive logits (image and matching positive text)
-        logits_per_image, logits_per_text = self.get_logits(image_features, pos_text_features, logit_scale)
+        logits_per_image, logits_per_text = self.get_logits(image_features, text_features, logit_scale)
         labels = self.get_ground_truth(device, logits_per_image.shape[0])
         
         contrastive_loss = (
@@ -284,15 +304,17 @@ class ClipLoss(nn.Module):
             F.cross_entropy(logits_per_text, labels)
         ) / 2
         
-        # Negative logits (image and negative text)
-        neg_logits_per_image = logit_scale * image_features @ neg_text_features.T
-        neg_labels = torch.full((neg_logits_per_image.shape[0],), -1, device=device, dtype=torch.long)
+        #! with out pre-task negative sample 
+        # # Negative logits (image and negative text)
+        # neg_logits_per_image = logit_scale * image_features @ neg_text_features.T
+        # neg_labels = torch.full((neg_logits_per_image.shape[0],), -1, device=device, dtype=torch.long)
         
-        negative_loss = F.margin_ranking_loss(
-            neg_logits_per_image, torch.zeros_like(neg_logits_per_image), neg_labels, margin=0.1
-        )
+        # negative_loss = F.margin_ranking_loss(
+        #     neg_logits_per_image, torch.zeros_like(neg_logits_per_image), neg_labels, margin=0.1
+        # )
         
-        total_loss = contrastive_loss + negative_loss
+        # total_loss = contrastive_loss + negative_loss
+        total_loss = contrastive_loss 
 
         return {"contrastive_loss": total_loss} if output_dict else total_loss
 
@@ -351,12 +373,15 @@ class Prompts(nn.Module):
             for block in num_blocks
         })
         self.num_prompts = num_prompts
+        self.num_blocks = num_blocks 
         
     def __len__(self):
         return len(self.prompts)
     
     def __getitem__(self, key):
         return self.prompts[str(key)]
+
+
     
 
 def normalize(*xs):

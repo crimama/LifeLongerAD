@@ -112,7 +112,7 @@ def run(cfg):
 
         testloader = DataLoader(
                 dataset     = testset,
-                batch_size  = cfg.DATASET.batch_size,
+                batch_size  = cfg.DATASET.test_batch_size,
                 num_workers = cfg.DATASET.num_workers,
                 shuffle     = False 
             )    
