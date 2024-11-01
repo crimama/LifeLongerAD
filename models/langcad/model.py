@@ -16,6 +16,15 @@ class POOL:
         self.key = {} 
         self.knowledge = [] 
         self.prompts = []
+    def save_pool(self, save_path:str):
+        pool_state = {'prompts':self.prompts, 'knowledge':self.knowledge}
+        torch.save(pool_state,save_path)
+        print('Save done')
+        
+    def load_pool(self, load_path:str):
+        pool_state = torch.load(load_path)
+        self.prompts, self.knowledge = pool_state['prompts'], pool_state['knowledge']
+        print('Load done')
 
         
     def get_knowledge(self, class_name:str=None, knowledge=None):
@@ -305,16 +314,16 @@ class ClipLoss(nn.Module):
         ) / 2
         
         #! with out pre-task negative sample 
-        # # Negative logits (image and negative text)
-        # neg_logits_per_image = logit_scale * image_features @ neg_text_features.T
-        # neg_labels = torch.full((neg_logits_per_image.shape[0],), -1, device=device, dtype=torch.long)
+        # Negative logits (image and negative text)
+        neg_logits_per_image = logit_scale * image_features @ neg_text_features.T
+        neg_labels = torch.full((neg_logits_per_image.shape[0],), -1, device=device, dtype=torch.long)
         
-        # negative_loss = F.margin_ranking_loss(
-        #     neg_logits_per_image, torch.zeros_like(neg_logits_per_image), neg_labels, margin=0.1
-        # )
+        negative_loss = F.margin_ranking_loss(
+            neg_logits_per_image, torch.zeros_like(neg_logits_per_image), neg_labels, margin=0.1
+        )
         
-        # total_loss = contrastive_loss + negative_loss
-        total_loss = contrastive_loss 
+        total_loss = contrastive_loss + negative_loss
+        # total_loss = contrastive_loss 
 
         return {"contrastive_loss": total_loss} if output_dict else total_loss
 

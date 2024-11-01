@@ -1,12 +1,10 @@
 DEFAULT:
-  exp_name: 'temp'
-  description: 'ablation : method 601 에 pre-task negative sample 제외'
+  exp_name: 'kiie_method1100_memorybank_0001'
+  description: 'Memory Bank 극한까지 줄였을 때 테스트'
 
 MODEL:
   method: LANGCAD
   backbone:
-    # name: ViT-B-32
-    # pretrained: laion400m_e31
     name: ViT-B-16
     pretrained: openai
   params:

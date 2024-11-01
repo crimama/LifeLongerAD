@@ -242,6 +242,11 @@ def fit(
             **{'task_agnostic' : 'agnostic'}
             )  
 
+    # Pool save 
+    model.pool.save_pool(
+        save_path = os.path.join(savedir,'last_pool.pth')
+    )
+    
     # agnostic last 
     for i, (class_name, class_loader_dict) in enumerate(loader_dict.items()):
         testloader = loader_dict[class_name]['test']

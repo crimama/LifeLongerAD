@@ -85,6 +85,11 @@ class MVTecAD(Dataset):
     def __len__(self):
         return len(self.img_dirs)
     
+    def get_easy_text(self, class_name):
+        txt_formula = ['A photo of {}', 'A picture of {}', 'A image of {}']
+        text = random.sample(txt_formula,1)[0].format(class_name)
+        return text
+    
     def __getitem__(self,idx):
         img_dir = self.img_dirs[idx]        
         
@@ -106,8 +111,11 @@ class MVTecAD(Dataset):
             else:
                 data_id = img_dir.split('/')[-1].strip('.png')
                 positive_text = self.positive[data_id]
-                # negative_text = self.negative[idx]
                 negative_text = random.sample(self.negative,1)[0]
+                
+                # negative_text = self.get_easy_text(random.sample(self.negative_class,1)[0])
+                # positive_text = self.get_easy_text(self.class_name)
+                
             return img, positive_text, negative_text
         
         
