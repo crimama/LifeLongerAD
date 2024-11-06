@@ -18,7 +18,6 @@ warnings.filterwarnings('ignore')
 _logger = logging.getLogger('train')
     
 
-
 def train(model, prompts, dataloader, optimizer, scheduler, accelerator, log_interval: int, cfg) -> dict:
     print('Train Start')
     batch_time_m = AverageMeter()
@@ -28,8 +27,6 @@ def train(model, prompts, dataloader, optimizer, scheduler, accelerator, log_int
     end = time.time()
     
     model.train()
-    used_memory = log_vram()
-    _logger.info(f'current memory : {used_memory}')
     for idx, (images, positive, negative) in enumerate(dataloader):
         data_time_m.update(time.time() - end)
         
@@ -60,12 +57,11 @@ def train(model, prompts, dataloader, optimizer, scheduler, accelerator, log_int
                             rate_avg   = images[0].size(0) / batch_time_m.avg,
                             data_time  = data_time_m
                             ))                
-        end = time.time()
-    
-    used_memory = log_vram()
-    _logger.info(f'train one epoch done current memory : {used_memory}')    
-    
-def test(model, prompts, dataloader, class_name:str=None, knowledge=None) -> dict:
+        end = time.time()    
+
+def test(model, prompts, dataloader, device, 
+         savedir, use_wandb, epoch, optimizer, epoch_time_m, class_name, current_class_name,
+          knowledge=None, agnostic=False, last=False) -> dict:
     from utils.metrics import MetricCalculator, loco_auroc
     
     model.eval()
@@ -78,37 +74,10 @@ def test(model, prompts, dataloader, class_name:str=None, knowledge=None) -> dic
     for idx, (images, labels, gts) in enumerate(dataloader):
 
         with torch.no_grad():
-            _, score, score_map = model.predict(images, prompts)
-                
-        # Stack Scoring for metrics 
-        pix_level.update(score_map,gts.type(torch.int))
-        img_level.update(score, labels.type(torch.int))
-            
-    i_results, p_results = img_level.compute(), pix_level.compute()
-    _logger.info('Image AUROC: %.3f%%| Pixel AUROC: %.3f%%' % (i_results['auroc'],p_results['auroc']))
-        
-    test_result = OrderedDict(img_level = i_results)
-    test_result.update([('pix_level', p_results)])    
-    return test_result 
-
-    
-def test_agnostic(model, prompts, dataloader, device, class_name:str=None, knowledge=None) -> dict:
-    from utils.metrics import MetricCalculator, loco_auroc
-    
-    model.eval()
-    img_level = MetricCalculator(metric_list = ['auroc','average_precision'])
-    pix_level = MetricCalculator(metric_list = ['auroc','average_precision'])     
-
-    #! Knowledge 
-    model.anomaly_scorer.fit([knowledge])    
-    #! Inference     
-    for idx, (images, labels, gts) in enumerate(dataloader):
-
-        with torch.no_grad():
-            features = model.embed(images).detach().cpu().numpy()
-            query_features = np.mean(features,axis=(0,1))
-
-            prompts = model.pool.retrieve_prompts(prompts, query_features).to(device)
+            if agnostic:
+                features = model.embed(images).detach().cpu().numpy()
+                query_features = np.mean(features,axis=(0,1))
+                prompts = model.pool.retrieve_prompts(prompts, query_features).to(device)
             
             _, score, score_map = model.predict(images, prompts)
                 
@@ -121,6 +90,23 @@ def test_agnostic(model, prompts, dataloader, device, class_name:str=None, knowl
         
     test_result = OrderedDict(img_level = i_results)
     test_result.update([('pix_level', p_results)])    
+    
+    #! Metric Logging 
+    if agnostic:
+        if last:
+            agnostic = 'agnostic-last'
+        else:
+            agnostic = 'agnostic'
+    else:
+        agnostic = 'specific'
+    
+    metric_logging(
+            savedir = savedir, use_wandb = use_wandb, epoch = epoch,
+            optimizer = optimizer, epoch_time_m = epoch_time_m,
+            test_metrics = test_result,
+            class_name = 'None', current_class_name = class_name,
+            **{'task_agnostic' : agnostic}
+            )
     return test_result 
 
 def create_knowledge(model, prompts, trainloader):
@@ -135,8 +121,8 @@ def create_knowledge(model, prompts, trainloader):
     
     # knowledge & key save 
     class_name = trainloader.dataset.class_name
-    knowledge_pool = model.pool.get_knowledge(class_name = class_name , 
-                                            knowledge  = sampled_features)
+    knowledge_pool = model.pool.get_knowledge(class_name = class_name, 
+                                                knowledge  = sampled_features)
     _logger.info(f"knowledge 크기 : {len(knowledge_pool)}")
     # prompts save 
     # model.pool.prompts[class_name] = prompts.to('cpu')
@@ -175,64 +161,55 @@ def fit(
         model, prompts, trainloader, testloader, optimizer, scheduler = accelerator.prepare(model, prompts, trainloader, testloader, optimizer, scheduler)
         
         # Train 
-        if n_task == 0:
-            epoch = 0
-            step = 0 
+        for epoch in range(epochs):
+            _logger.info(f'Epoch: {epoch+1}/{epochs}')
+            # train one epoch 
+            train(
+                model        = model, 
+                prompts      = prompts, 
+                dataloader   = trainloader, 
+                optimizer    = optimizer, 
+                scheduler    = scheduler,
+                accelerator  = accelerator, 
+                log_interval = log_interval,
+                cfg           = cfg 
+            )                
+
             epoch_time_m.update(time.time() - end)
             end = time.time()
-        else:
-            for step,  epoch in enumerate(range(epochs)):
-                _logger.info(f'Epoch: {epoch+1}/{epochs}')
-                # train one epoch 
-                train(
-                    model        = model, 
-                    prompts      = prompts, 
-                    dataloader   = trainloader, 
-                    optimizer    = optimizer, 
-                    scheduler    = scheduler,
-                    accelerator  = accelerator, 
-                    log_interval = log_interval,
-                    cfg           = cfg 
-                )                
-
-                epoch_time_m.update(time.time() - end)
-                end = time.time()
             
-            # scheduler.step()
+            if scheduler:
+                scheduler.step()
+                
         # Create knowledge and save 
+        '''
+            Description 
+                - 학습 완료 후 현재 Task의 feature를 추출한 다음 Knowledge Pool에 저장 
+                - feature 추출 -> coreset sampling -> knowledge pool에 extend 
+            Return 
+                - 모든 feature 저장되어 있는 knowledge pool
+                - 현재 task의 feature 
+        ''' 
         knowledge_pool, class_features = create_knowledge(model, prompts, trainloader)
                 
-        # Task-specific inference 
-        test_metrics = test(
-                    model        = model, 
-                    prompts      = prompts.to(accelerator.device), 
-                    dataloader   = testloader,
-                    knowledge    = class_features
-                )
-        metric_logging(
-            savedir = savedir, use_wandb = use_wandb, epoch = epoch, step = step,
-            optimizer = optimizer, epoch_time_m = epoch_time_m,
-            test_metrics = test_metrics,
-            class_name = class_name, current_class_name = class_name,
-            **{'task_agnostic' : 'specific'}
-            ) 
-        
-        # Task-agnostic inference 
-        test_metrics = test_agnostic(
-                    model        = model, 
-                    prompts      = prompts, 
-                    device       = accelerator.device,
-                    dataloader   = testloader,
-                    knowledge    = np.array(knowledge_pool) 
-                )
-        
-        metric_logging(
-            savedir = savedir, use_wandb = use_wandb, epoch = epoch, step = step,
-            optimizer = optimizer, epoch_time_m = epoch_time_m,
-            test_metrics = test_metrics,
-            class_name = 'None', current_class_name = class_name,
-            **{'task_agnostic' : 'agnostic'}
-            )  
+        # Task-specific / agnostic inference 
+        for agnostic in [False, True]:
+            test_metrics = test(
+                        model              = model, 
+                        prompts            = prompts.to(accelerator.device), 
+                        device             = accelerator.device,
+                        savedir            = savedir, 
+                        use_wandb          = use_wandb,
+                        epoch              = 0 if epochs == 0 else epoch,
+                        optimizer          = optimizer, 
+                        epoch_time_m       = epoch_time_m,
+                        class_name         = class_name,
+                        current_class_name = class_name,
+                        dataloader         = testloader,
+                        knowledge          = class_features,
+                        agnostic           = agnostic,
+                        last               = False
+                    )
 
     # Pool save 
     model.pool.save_pool(
@@ -244,36 +221,19 @@ def fit(
         testloader = loader_dict[class_name]['test']
         testloader = accelerator.prepare(testloader)
         
-        test_metrics = test_agnostic(
-            model        = model, 
-            prompts      = prompts, 
-            device       = accelerator.device,
-            dataloader   = testloader,
-            knowledge    = np.array(knowledge_pool)  
+        test_metrics = test(
+            model              = model, 
+            prompts            = prompts.to(accelerator.device), 
+            device             = accelerator.device,
+            savedir            = savedir, 
+            use_wandb          = use_wandb,
+            epoch              = epoch,
+            optimizer          = optimizer, 
+            epoch_time_m       = epoch_time_m,
+            class_name         = class_name,
+            current_class_name = class_name,
+            dataloader         = testloader,
+            knowledge          = class_features,
+            agnostic           = True,
+            last               = True
         )
-        
-        metric_logging(
-            savedir = savedir, use_wandb = use_wandb, epoch = epoch, step = step,
-            optimizer = optimizer, epoch_time_m = epoch_time_m,
-            test_metrics = test_metrics,
-            class_name = 'None', current_class_name = class_name,
-            **{'task_agnostic' : 'agnostic-last'}
-            )  
-# def evaluation_agnostic(loader_dict:dict, model, prompts,)
-
-def log_vram():
-    import pynvml
-
-    # NVML 초기화
-    pynvml.nvmlInit()
-
-    # GPU 개수 확인
-    device_count = pynvml.nvmlDeviceGetCount()
-
-    for i in range(device_count):
-        handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        
-    pynvml.nvmlShutdown()
-    
-    return (info.used / 1024 ** 2)
