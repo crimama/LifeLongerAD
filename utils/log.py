@@ -47,7 +47,7 @@ class AverageMeter:
         self.avg = self.sum / self.count
                           
 def metric_logging(savedir, use_wandb=None,
-                    step=None, epoch_time_m=None, epoch = None,
+                    epoch_time_m=None, epoch = None,
                     optimizer=None,test_metrics=None,task=0,train_metrics=None,
                     class_name=None, current_class_name=None, **kwargs):
     
@@ -89,7 +89,7 @@ def metric_logging(savedir, use_wandb=None,
     save_metrics_to_csv(dict(metrics), os.path.join(savedir,'result.csv'))
     
     if use_wandb:
-        wandb.log(metrics, step=step)
+        wandb.log(metrics, step=epoch)
         
         
 def save_metrics_to_csv(metrics, csv_filename):
