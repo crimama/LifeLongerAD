@@ -27,7 +27,7 @@ class MVTecAD(Dataset):
         )
     '''
     def __init__(self, df: pd.DataFrame, class_name:str, caption_dict:dict, train_mode:str, transform, gt_transform, 
-                 gt=True, idx=False, text=True):
+                 num_neg_sample=1, gt=True, idx=False, text=True):
         '''
         train_mode = ['train','valid','test']
         '''
@@ -51,6 +51,7 @@ class MVTecAD(Dataset):
         # Text 
         self.text_format = ["a photo of {}", "a picture of {}", "a image of {}"]
         self.positive, self.negative = self.caption_split(caption_dict, class_name)
+        self.num_neg_sample = num_neg_sample
         np.random.shuffle(self.negative)
     def caption_split(self, caption_dict, class_name):
         '''
@@ -111,7 +112,7 @@ class MVTecAD(Dataset):
             else:
                 data_id = img_dir.split('/')[-1].strip('.png')
                 positive_text = self.positive[data_id]
-                negative_text = random.sample(self.negative,1)[0]
+                negative_text = random.sample(self.negative,self.num_neg_sample) 
                 
                 # negative_text = self.get_easy_text(random.sample(self.negative_class,1)[0])
                 # positive_text = self.get_easy_text(self.class_name)

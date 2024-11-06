@@ -233,7 +233,8 @@ class LANGCAD(nn.Module):
         pos_text_features = self._embed_text(positive)
         pos_text_features = pos_text_features.mean(dim=1)
         
-        neg_text_features = self._embed_text(negative)
+        
+        neg_text_features = torch.cat([self._embed_text(t) for t in negative])        
         neg_text_features = neg_text_features.mean(dim=1)
         
         # loss = self.criterion(visual_features, text_features)
@@ -302,6 +303,7 @@ class ClipLoss(nn.Module):
         
         return logits_per_image, logits_per_text
 
+#! contrastive loss + margin ranking loss 
     def forward(self, image_features, text_features, neg_text_features, logit_scale=1/0.07, output_dict=False):
         device = image_features.device
         
@@ -313,65 +315,32 @@ class ClipLoss(nn.Module):
             F.cross_entropy(logits_per_text, labels)
         ) / 2
         
-        #! with out pre-task negative sample 
         # Negative logits (image and negative text)
         neg_logits_per_image = logit_scale * image_features @ neg_text_features.T
-        neg_labels = torch.full((neg_logits_per_image.shape[0],), -1, device=device, dtype=torch.long)
-        
-        negative_loss = F.margin_ranking_loss(
-            neg_logits_per_image, torch.zeros_like(neg_logits_per_image), neg_labels, margin=0.1
-        )
+        neg_labels = torch.full((neg_logits_per_image.shape[1],), -1, device=device, dtype=torch.long)
+        negative_loss = F.margin_ranking_loss(neg_logits_per_image, torch.zeros_like(neg_logits_per_image), neg_labels, margin=0.1)
         
         total_loss = contrastive_loss + negative_loss
-        # total_loss = contrastive_loss 
 
         return {"contrastive_loss": total_loss} if output_dict else total_loss
 
-
-#! Baseline clip loss (kiie method 2)  
-# class ClipLoss(nn.Module):
-#     def __init__(
-#             self,
-#             local_loss=False,
-#             gather_with_grad=False,
-#             cache_labels=False,
-#     ):
-#         super().__init__()
-#         self.local_loss = local_loss
-#         self.gather_with_grad = gather_with_grad
-#         self.cache_labels = cache_labels
-
-#         self.prev_num_logits = 0
-#         self.labels = {}
-
-#     def get_ground_truth(self, device, num_logits) -> torch.Tensor:
-#         if self.prev_num_logits != num_logits or device not in self.labels:
-#             labels = torch.arange(num_logits, device=device, dtype=torch.long)
-#             if self.cache_labels:
-#                 self.labels[device] = labels
-#                 self.prev_num_logits = num_logits
-#         else:
-#             labels = self.labels[device]
-#         return labels
-
-#     def get_logits(self, image_features, text_features, logit_scale):
-#         logits_per_image = logit_scale * image_features @ text_features.T
-#         logits_per_text = logit_scale * text_features @ image_features.T
+#! contrastive loss 
+    # def forward(self, image_features, pos_text_features, neg_text_features, logit_scale=1/0.07):
+    #     device = image_features.device
         
-#         return logits_per_image, logits_per_text
+    #     text_features = torch.cat([pos_text_features,neg_text_features])
+        
+    #     logits_per_image, logits_per_text = self.get_logits(
+    #         image_features, text_features, logit_scale)
+    #     labels = self.get_ground_truth(device, logits_per_image.shape[0])
+        
+    #     contrastive_loss = (
+    #         F.cross_entropy(logits_per_image, labels) +
+    #         F.cross_entropy(logits_per_text[:len(labels)], labels)
+    #     ) / 2
+        
 
-#     def forward(self, image_features, text_features, logit_scale=1/0.07, output_dict=False):
-#         device = image_features.device
-#         logits_per_image, logits_per_text = self.get_logits(image_features, text_features, logit_scale)
-
-#         labels = self.get_ground_truth(device, logits_per_image.shape[0])
-
-#         total_loss = (
-#             F.cross_entropy(logits_per_image, labels) +
-#             F.cross_entropy(logits_per_text, labels)
-#         ) / 2
-
-#         return {"contrastive_loss": total_loss} if output_dict else total_loss
+    #     return contrastive_loss
     
     
 class Prompts(nn.Module):

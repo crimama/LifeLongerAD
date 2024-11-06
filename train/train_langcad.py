@@ -155,7 +155,7 @@ def fit(
     epoch_time_m = AverageMeter()
     end = time.time() 
     
-    for i, (class_name, class_loader_dict) in enumerate(loader_dict.items()):
+    for n_task, (class_name, class_loader_dict) in enumerate(loader_dict.items()):
         torch.cuda.empty_cache()
         _logger.info(f"Current Class Name : {class_name}")
         
@@ -168,14 +168,6 @@ def fit(
             scheduler = __import__('torch.optim.lr_scheduler', fromlist='lr_scheduler').__dict__[cfg.SCHEDULER.name](optimizer, **cfg.SCHEDULER.params)
         else:
             scheduler = None
-        
-        # scheduler = CosineAnnealingWarmupRestarts(optimizer,
-        #                                     first_cycle_steps=10,
-        #                                     cycle_mult=1.0,
-        #                                     max_lr=0.1,
-        #                                     min_lr=0.001,
-        #                                     warmup_steps=5,
-        #                                     gamma=1.0)
             
         # Init Dataloader 
         trainloader, testloader = loader_dict[class_name]['train'],loader_dict[class_name]['test']
@@ -183,7 +175,7 @@ def fit(
         model, prompts, trainloader, testloader, optimizer, scheduler = accelerator.prepare(model, prompts, trainloader, testloader, optimizer, scheduler)
         
         # Train 
-        if i == 0:
+        if n_task == 0:
             epoch = 0
             step = 0 
             epoch_time_m.update(time.time() - end)
@@ -267,7 +259,7 @@ def fit(
             class_name = 'None', current_class_name = class_name,
             **{'task_agnostic' : 'agnostic-last'}
             )  
-        
+# def evaluation_agnostic(loader_dict:dict, model, prompts,)
 
 def log_vram():
     import pynvml
