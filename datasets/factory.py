@@ -20,27 +20,27 @@ def create_dataset(dataset_name: str, datadir: str, class_name: str, caption_dic
                                                 )
     return trainset, testset
 
-def load_VISA(dataset_name: str, datadir: str, class_name: str, img_size: int, mean: list, std: list, aug_info=None, baseline: bool = False, anomaly_ratio: float = 0.0):
+def load_VISA(dataset_name: str, datadir: str, class_name: str, caption_dict:dict, img_size: int, mean: list, std: list, aug_info=None, baseline: bool = False, anomaly_ratio: float = 0.0, **params):
     df = get_visa_df(dataset_name, datadir, class_name, baseline, anomaly_ratio)
     
     train_transform = train_augmentation(img_size=img_size, mean=mean, std=std, aug_info=aug_info)
     test_transform  = test_augmentation(img_size=img_size, mean=mean, std=std, aug_info=aug_info)
     gt_transform    = gt_augmentation(img_size=img_size, aug_info=aug_info)
 
-    trainset = VISA(df=df, class_name = class_name, train_mode='train', transform=train_transform, gt_transform=gt_transform, gt=False)
-    testset  = VISA(df=df, class_name = class_name, train_mode='test', transform=test_transform, gt_transform=gt_transform, gt=True)
+    trainset = VISA(df=df, class_name = class_name, caption_dict=caption_dict, train_mode='train', transform=train_transform, gt_transform=gt_transform)
+    testset  = VISA(df=df, class_name = class_name, caption_dict=caption_dict, train_mode='test', transform=test_transform, gt_transform=gt_transform)
     
     return trainset, testset
 
-def load_MVTecAD(dataset_name: str, datadir: str, class_name: str, caption_dict:dict, img_size: int, mean: list, std: list, aug_info=None, baseline: bool = False, anomaly_ratio: float = 0.0):
+def load_MVTecAD(dataset_name: str, datadir: str, class_name: str, caption_dict:dict, img_size: int, mean: list, std: list, aug_info=None, baseline: bool = False, anomaly_ratio: float = 0.0,**params):
     df = get_df(dataset_name, datadir, class_name, baseline, anomaly_ratio)
     
     train_transform = train_augmentation(img_size=img_size, mean=mean, std=std, aug_info=aug_info)
     test_transform  = test_augmentation(img_size=img_size, mean=mean, std=std, aug_info=aug_info)
     gt_transform    = gt_augmentation(img_size=img_size, aug_info=aug_info)
 
-    trainset = MVTecAD(df=df, class_name = class_name, caption_dict=caption_dict, train_mode='train', transform=train_transform, gt_transform=gt_transform, gt=False)
-    testset  = MVTecAD(df=df, class_name = class_name, caption_dict=caption_dict, train_mode='test', transform=test_transform, gt_transform=gt_transform, gt=True)
+    trainset = MVTecAD(df=df, class_name = class_name, caption_dict=caption_dict, train_mode='train', transform=train_transform, gt_transform=gt_transform, gt=False,**params)
+    testset  = MVTecAD(df=df, class_name = class_name, caption_dict=caption_dict, train_mode='test', transform=test_transform, gt_transform=gt_transform,  gt=True  ,**params)
     
     return trainset, testset
 

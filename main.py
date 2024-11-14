@@ -43,9 +43,12 @@ def load_caption(datadir, dataset, class_names, json_name:str='caption.json') ->
     
     caption_dict = {}
     for cn in class_names:
-        json_path = os.path.join(datadir, dataset, cn, json_name)
-        caption = load_json(json_path)
-        caption_dict[cn] = caption 
+        try:
+            json_path = os.path.join(datadir, dataset, cn, json_name)
+            caption = load_json(json_path)
+            caption_dict[cn] = caption 
+        except:
+            caption_dict[cn] = {}
     return caption_dict 
         
 
@@ -89,6 +92,7 @@ def run(cfg):
         dataset     = cfg.DATASET.dataset_name,
         class_names = cfg.DATASET.class_names
     )
+    
     loader_dict = {}
     for cn in cfg.DATASET.class_names:
         trainset, testset = create_dataset(
@@ -129,15 +133,16 @@ def run(cfg):
                 
         
     __import__(f'train.train_{cfg.MODEL.method.lower()}', fromlist=f'train_{cfg.MODEL.method.lower()}').fit(
-            model        = model, 
-            loader_dict  = loader_dict,
-            accelerator  = accelerator,
-            epochs       = cfg.TRAIN.epochs, 
-            use_wandb    = cfg.TRAIN.wandb.use,
-            log_interval = cfg.TRAIN.log_interval,
-            savedir      = savedir,
-            seed         = cfg.DEFAULT.seed,
-            cfg          = cfg
+            model         = model, 
+            loader_dict   = loader_dict,
+            accelerator   = accelerator,
+            epochs        = cfg.TRAIN.epochs, 
+            use_wandb     = cfg.TRAIN.wandb.use,
+            log_interval  = cfg.TRAIN.log_interval,
+            eval_interval = cfg.TRAIN.eval_interval,
+            savedir       = savedir,
+            seed          = cfg.DEFAULT.seed,
+            cfg           = cfg
         )     
     
 

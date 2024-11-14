@@ -1,6 +1,6 @@
 from glob import glob 
 import os 
-
+import random 
 import numpy as np 
 import pandas as pd 
 
@@ -26,7 +26,8 @@ class VISA(Dataset):
             gt           = True 
         )
     '''
-    def __init__(self, df: pd.DataFrame, class_name:str, train_mode:str, transform, gt_transform, gt=True, idx=False):
+    def __init__(self, df: pd.DataFrame, class_name:str, caption_dict:dict, train_mode:str, transform, gt_transform, 
+                 num_neg_sample=1, gt=True, idx=False, text_method='easy'):
         '''
         train_mode = ['train','valid','test']
         '''
@@ -48,16 +49,43 @@ class VISA(Dataset):
         self.class_name = class_name
         self.idx = idx 
         
+        # Text 
+        self.text_method = text_method
+        self.caption_dict = caption_dict
+        self.text_format = ["a photo of {}", "a picture of {}", "a image of {}"]
+        self.positive, self.negative = self.caption_split(caption_dict, class_name)        
+        self.task_order = list(caption_dict.keys()).index(class_name)
+        self.neg_classes = list(self.caption_dict.keys())[:self.task_order]
+        
+    def caption_split(self, caption_dict, class_name):
+        '''z
+            Output 
+                positive : dict 
+                negative : list 
+        '''
+        task_order = list(caption_dict.keys()).index(class_name)
+        self.task_order = task_order 
+        negative = [] 
+        self.negative_class = [] 
+        for cn in list(caption_dict.keys())[:task_order]:
+            caption = caption_dict[cn].values()
+            negative.extend(caption)
+            self.negative_class.append(cn)
+        positive = caption_dict[class_name]
+        return positive, negative 
+    
+    def get_easy_text(self, class_name):
+        txt_formula = ['A photo of {}', 'A picture of {}', 'A image of {}']
+        text = random.sample(txt_formula,1)[0].format(class_name)
+        return text
+        
     def _get_ground_truth(self,img_dir, img, idx):
         if self.labels[idx] == 1:
             img_dir = self.masks[idx]
             gt = Image.open(img_dir)
             gt = self.gt_transform(gt)
-        else:
-            # image = np.zeros_like(torch.permute(img,dims=(1,2,0))).astype(np.uint8)
+        else:            
             gt = torch.zeros([1, *img.size()[1:]])
-        # gt = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
         return gt
         
     def __len__(self):
@@ -65,28 +93,30 @@ class VISA(Dataset):
     
     def __getitem__(self,idx):
         img_dir = self.img_dirs[idx]
-        # img = cv2.imread(img_dir)
         img = Image.open(img_dir).convert('RGB')     
         img = self.transform(img)
         img = img.type(torch.float32)
         label = self.labels[idx]
         
-        if self.train_mode == 'train':
-            return img, img_dir, label
-        else:
-            if self.gt:
-                gt = self._get_ground_truth(img_dir, img, idx)
-                #gt = self.gt_transform(gt)
-                gt = (gt > 0).float()
-                #gt = gt.type(torch.int64)
-                
-                
-                if self.idx:
-                    return img, label, gt, idx
-                else:
-                    return img, label, gt
+        if self.train_mode == 'test': # Test
+            gt = self._get_ground_truth(img_dir,img, idx)
+            gt = (gt > 0).float()            
             
+            return img, label, gt
+        
+        else: # Train 
+            data_id = img_dir.split('/')[-1].strip('.png')
+            
+            # Positive Text 
+            if self.text_method == 'pre-gen':
+                positive_text = self.positive[data_id]
             else:
-                return img, label 
+                positive_text = np.random.choice(self.text_format).format(self.class_name)
             
-            
+            # Negative Text 
+            if self.task_order == 0 or self.text_method == 'easy':
+                negative_text = np.random.choice(self.text_format).format(self.class_name)
+            else:
+                negative_text = random.sample(self.negative,self.num_neg_sample)[0]
+                
+            return img, positive_text, negative_text

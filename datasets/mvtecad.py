@@ -6,7 +6,7 @@ import pandas as pd
 
 import cv2 
 from PIL import Image 
-
+from typing import Literal
 import torch 
 from torch.utils.data import Dataset
 
@@ -27,7 +27,7 @@ class MVTecAD(Dataset):
         )
     '''
     def __init__(self, df: pd.DataFrame, class_name:str, caption_dict:dict, train_mode:str, transform, gt_transform, 
-                 num_neg_sample=1, gt=True, idx=False, text=True):
+                 num_neg_sample=1, gt=True, idx=False, text_method: Literal['easy', 'pre-gen'] = 'pre-gen'):
         '''
         train_mode = ['train','valid','test']
         '''
@@ -39,7 +39,6 @@ class MVTecAD(Dataset):
         self.labels = self.df[self.df['train/test'] == train_mode]['anomaly'].values 
         
         # ground truth 
-        self.gt = gt # mode 
         self.gt_transform = gt_transform 
 
         # Image 
@@ -49,12 +48,14 @@ class MVTecAD(Dataset):
         self.train_mode = train_mode
         
         # Text 
+        self.text_method = text_method
         self.text_format = ["a photo of {}", "a picture of {}", "a image of {}"]
         self.positive, self.negative = self.caption_split(caption_dict, class_name)
         self.num_neg_sample = num_neg_sample
         np.random.shuffle(self.negative)
+        
     def caption_split(self, caption_dict, class_name):
-        '''
+        '''z
             Output 
                 positive : dict 
                 negative : list 
@@ -99,31 +100,28 @@ class MVTecAD(Dataset):
         img = img.type(torch.float32)
         label = self.labels[idx]
         
-        if self.gt: # Test
+        if self.train_mode == 'test': # Test
             gt = self._get_ground_truth(img_dir,img)
             gt = (gt > 0).float()            
             
             return img, label, gt
         
         else: # Train 
-            if self.task_order == 0:
-                negative_text = np.random.choice(self.text_format).format(self.class_name)
-                positive_text = "a photo of {}".format(self.class_name)
-            else:
-                data_id = img_dir.split('/')[-1].strip('.png')
+            data_id = img_dir.split('/')[-1].strip('.png')
+            
+            # Positive Text 
+            if self.text_method == 'pre-gen':
                 positive_text = self.positive[data_id]
+            else:
+                positive_text = np.random.choice(self.text_format).format(self.class_name)
+            
+            # Negative Text 
+            if self.task_order == 0 or self.text_method == 'easy':
+                negative_text = np.random.choice(self.text_format).format(self.class_name)
+            else:
                 negative_text = random.sample(self.negative,self.num_neg_sample) 
-                
-                # negative_text = self.get_easy_text(random.sample(self.negative_class,1)[0])
-                # positive_text = self.get_easy_text(self.class_name)
                 
             return img, positive_text, negative_text
         
         
-        #! method 301 방식 
-        # else:
-        #     data_id = img_dir.split('/')[-1].strip('.png')
-        #     positive_text = self.positive[data_id]               
-        #     return img, label, positive_text 
-        
-        
+    
