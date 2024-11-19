@@ -321,7 +321,9 @@ class ClipLoss(nn.Module):
             #     F.cross_entropy(logits_per_image, labels) +
             #     F.cross_entropy(logits_per_text, labels)
             # ) / 2
-            contrastive_loss = torch.Tensor([0]).to(device)
+            # contrastive_loss = torch.Tensor([0]).to(device)
+            
+            contrastive_loss = contrastive_loss_with_hard_negatives(image_features, text_features, neg_text_features)
             
             #! cosine sim loss 
             # l2_distance = torch.norm(image_features - text_features, p=2, dim=1)
@@ -369,3 +371,30 @@ class Prompts(nn.Module):
     def __getitem__(self, key):
         return self.prompts[str(key)]
     
+    
+def contrastive_loss_with_hard_negatives(image_embeddings, pos_text_embeddings, hard_neg_text_embeddings, temperature=0.1):
+    # Normalize embeddings
+    image_embeddings = F.normalize(image_embeddings, p=2, dim=1)
+    pos_text_embeddings = F.normalize(pos_text_embeddings, p=2, dim=1)
+    hard_neg_text_embeddings = F.normalize(hard_neg_text_embeddings, p=2, dim=1)
+    
+    # Positive logits (in-batch pairs)
+    pos_logits = torch.matmul(image_embeddings, pos_text_embeddings.T).diag().view(-1, 1) / temperature
+    
+    # In-batch negative logits
+    in_batch_neg_logits = torch.matmul(image_embeddings, pos_text_embeddings.T) / temperature
+    in_batch_neg_logits.fill_diagonal_(-float('inf'))  # Mask positive pairs
+    
+    # Hard negative logits (cross-modal negatives)
+    hard_neg_logits = torch.matmul(image_embeddings, hard_neg_text_embeddings.T) / temperature
+    
+    # Concatenate positive, in-batch negative, and hard negative logits
+    logits = torch.cat([pos_logits, in_batch_neg_logits, hard_neg_logits], dim=1)
+    
+    # Create labels for cross-entropy loss (positive is at index 0)
+    labels = torch.zeros(image_embeddings.size(0)).long().to(image_embeddings.device)
+    
+    # Calculate cross-entropy loss
+    loss = F.cross_entropy(logits, labels)
+    
+    return loss
