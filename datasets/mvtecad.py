@@ -119,7 +119,7 @@ class MVTecAD(Dataset):
             if self.task_order == 0 or self.text_method == 'easy':
                 negative_text = np.random.choice(self.text_format).format(self.class_name)
             else:
-                negative_text = random.sample(self.negative,self.num_neg_sample) 
+                negative_text = random.sample(self.negative,self.num_neg_sample)[0]
                 
             return img, positive_text, negative_text
         
