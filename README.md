@@ -52,3 +52,11 @@ done
 
 
 ```
+
+# Update record 
+
+**2024-11-09**
+- commit : [dm24] final backup 
+  - dm24 까지의 내용 모두 완료한 뒤 백업함 
+  - contrastive loss with only pre-task negative sample 까지 구현 완료 
+  - 현재까지, 해당 버전의 SOTA - contrastive with only hard negative + lr 0.005 + no margin	
