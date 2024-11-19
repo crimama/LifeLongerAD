@@ -1,36 +1,43 @@
 DEFAULT:
-  exp_name: 'kiie_method1100_memorybank_0001'
-  description: 'Memory Bank 극한까지 줄였을 때 테스트'
+  exp_name: 'contrastive with only hard negative + lr 0.005'
+  description: ''
 
 MODEL:
   method: LANGCAD
   backbone:
     name: ViT-B-16
-    pretrained: openai
+    pretrained: openai #openai
   params:
     input_shape:
       - 3 
       - 224
       - 224
     faiss_num_workers: 4
-    num_layers: 
-      - 3
+    num_layers: 3
     sampling_ratio: 0.1
     num_prompts: 6
+    prompt_dim: 768
+    prompt_method: intermediate # intermediate input null
+    txt_emb_method: null #null:last intermediate
+    pre_task: null #margin infonce null 
 
 
 DATASET:
   aug_info: 
     - PatchCore
+  params:
+    num_neg_sample: 1
+    text_method: pre-gen #pre-gen easy
+
 
 
 OPTIMIZER:
   opt_name: Adam
-  lr: 0.005
+  lr: 0.005 #5e-3
   params:
     betas: 
     - 0.5
     - 0.999
 
 TRAIN:
-  epochs: 100
+  epochs: 20

@@ -1,11 +1,11 @@
 DEFAULT:
   seed: 0
   savedir: ./results
-  exp_name: 'Baseline_pcb1&mara1_first'
+  exp_name: '.'
 
 DATASET:
   datadir: ../Data
-  batch_size: 32
+  batch_size: 128
   test_batch_size: 32
   num_workers: 0
   dataset_name: VISA  # [AnomalyDataset,MVTecAD]
@@ -20,12 +20,12 @@ DATASET:
     - pcb1
     - candle
     - capsules
+    - pcb2
     - cashew
     - chewinggum
     - fryum
-    - macaroni2
-    - pcb2
     - pcb3
+    - macaroni2
     - pcb4
     - pipe_fryum
 
@@ -38,10 +38,11 @@ OPTIMIZER:
     - 0.999
 
 TRAIN:
-  epochs: 1
+  epochs: 10
   grad_accum_steps: 1
   mixed_precision: 'no'
-  log_interval: 10
+  log_interval: 2
+  eval_interval: 50
   wandb:
     use: false
     project_name: LANGCAD

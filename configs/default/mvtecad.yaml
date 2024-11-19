@@ -42,10 +42,11 @@ OPTIMIZER:
     - 0.999
 
 TRAIN:
-  epochs: 1
+  epochs: 10
   grad_accum_steps: 1
   mixed_precision: 'no'
   log_interval: 1
+  eval_interval: 50
   wandb:
     use: false
     project_name: LANGCAD

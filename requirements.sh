@@ -30,3 +30,11 @@ pip install torch==1.10.1+cu111 torchvision==0.11.2+cu111 torchaudio==0.10.1 -f 
 pip install tqdm tensorboard setuptools==58.0.4 opencv-python scikit-image scikit-learn matplotlib seaborn ftfy regex numpy==1.26.4
 
 pip install 'git+https://github.com/katsura-jp/pytorch-cosine-annealing-with-warmup'
+
+
+# timm                         0.6.5
+# tokenizers                   0.20.1
+# torch                        1.10.1+cu111
+# torchaudio                   0.10.1+cu111
+# torchmetrics                 0.10.3
+# torchvision                  0.11.2+cu111
