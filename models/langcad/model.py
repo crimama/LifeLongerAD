@@ -137,8 +137,8 @@ class LANGCAD(nn.Module):
 
             cast_dtype = self.encoders.transformer.get_cast_dtype()
 
-            x = self.encoders.token_embedding(text).to(cast_dtype)
-            x = x + self.encoders.positional_embedding.to(cast_dtype)
+            x = self.encoders.token_embedding(text).to(self.device)
+            x = x + self.encoders.positional_embedding.to(self.device)
             
             if txt_emb_method is None:
                 x - self.encoders.transformer(x, attn_mask=self.encoders.attn_mask)
@@ -248,7 +248,8 @@ class LANGCAD(nn.Module):
         pos_text_features = pos_text_features.mean(dim=1)
         
         
-        neg_text_features = torch.cat([self.embed_text(t, txt_emb_method=self.txt_emb_method) for t in negative])        
+        # neg_text_features = torch.cat([self.embed_text(t, txt_emb_method=self.txt_emb_method) for t in negative])        
+        neg_text_features = self.embed_text(negative, txt_emb_method=self.txt_emb_method)
         neg_text_features = neg_text_features.mean(dim=1)
         
         # loss = self.criterion(visual_features, text_features)

@@ -13,10 +13,33 @@ class IdentitySampler:
         return features
 
 
+# class BaseSampler(abc.ABC):
+#     def __init__(self, percentage: float):
+#         if not 0 < percentage < 1:
+#             raise ValueError("Percentage value not in (0, 1).")
+#         self.percentage = percentage
+
+#     @abc.abstractmethod
+#     def run(
+#         self, features: Union[torch.Tensor, np.ndarray]
+#     ) -> Union[torch.Tensor, np.ndarray]:
+#         pass
+
+#     def _store_type(self, features: Union[torch.Tensor, np.ndarray]) -> None:
+#         self.features_is_numpy = isinstance(features, np.ndarray)
+#         if not self.features_is_numpy:
+#             self.features_device = features.device
+
+#     def _restore_type(self, features: torch.Tensor) -> Union[torch.Tensor, np.ndarray]:
+#         if self.features_is_numpy:
+#             return features.cpu().numpy()
+#         return features.to(self.features_device)
+    
 class BaseSampler(abc.ABC):
     def __init__(self, percentage: float):
-        if not 0 < percentage < 1:
-            raise ValueError("Percentage value not in (0, 1).")
+        # Type check for percentage
+        if not isinstance(percentage, (float, int)):
+            raise TypeError("Percentage must be of type float or int.")
         self.percentage = percentage
 
     @abc.abstractmethod
@@ -34,6 +57,7 @@ class BaseSampler(abc.ABC):
         if self.features_is_numpy:
             return features.cpu().numpy()
         return features.to(self.features_device)
+
 
 
 class GreedyCoresetSampler(BaseSampler):
@@ -152,7 +176,11 @@ class ApproximateGreedyCoresetSampler(GreedyCoresetSampler):
             approximate_distance_matrix, axis=-1
         ).reshape(-1, 1)
         coreset_indices = []
-        num_coreset_samples = int(len(features) * self.percentage)
+        
+        if type(self.percentage) == int:
+            num_coreset_samples = self.percentage 
+        elif type(self.percentage) == float:
+            num_coreset_samples = int(len(features) * self.percentage)
 
         with torch.no_grad():
             for _ in tqdm.tqdm(range(num_coreset_samples), desc="Subsampling..."):
