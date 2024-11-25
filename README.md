@@ -60,3 +60,8 @@ done
   - dm24 까지의 내용 모두 완료한 뒤 백업함 
   - contrastive loss with only pre-task negative sample 까지 구현 완료 
   - 현재까지, 해당 버전의 SOTA - contrastive with only hard negative + lr 0.005 + no margin	
+
+**2024-11-25**
+- commit : [24-11-25] num_neg_sample / sampling method 
+  - num neg sample 한 번에 2개 이상 load 할 수 있도록 데이터셋, 모델 수정 
+  - coresetsampling - sampling 수 int로 입력 받아서 처리 할 수 있도록 수정 
