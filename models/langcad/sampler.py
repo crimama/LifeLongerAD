@@ -91,6 +91,9 @@ class GreedyCoresetSampler(BaseSampler):
         Args:
             features: [N x D]
         """
+        D = features.shape[-1]
+        features = features.reshape(-1,D).astype(np.float32) 
+        
         if self.percentage == 1:
             return features
         self._store_type(features)
@@ -99,7 +102,7 @@ class GreedyCoresetSampler(BaseSampler):
         reduced_features = self._reduce_features(features)
         sample_indices = self._compute_greedy_coreset_indices(reduced_features)
         features = features[sample_indices]
-        return self._restore_type(features), sample_indices
+        return self._restore_type(features)
 
     @staticmethod
     def _compute_batchwise_differences(
@@ -137,7 +140,45 @@ class GreedyCoresetSampler(BaseSampler):
             coreset_anchor_distances = torch.min(coreset_anchor_distances, dim=1).values
 
         return np.array(coreset_indices)
+    
+class PoolingSampler(BaseSampler):
+    def __init__(
+        self,
+        percentage: float,
+        device: torch.device,
+        dimension_to_project_features_to=128,
+    ):
+        """Greedy Coreset sampling base class."""
+        super().__init__(percentage)
 
+        self.device = device
+        self.dimension_to_project_features_to = dimension_to_project_features_to
+
+    def _reduce_features(self, features):
+        if features.shape[1] == self.dimension_to_project_features_to:
+            return features
+        mapper = torch.nn.Linear(
+            features.shape[1], self.dimension_to_project_features_to, bias=False
+        )
+        _ = mapper.to(self.device)
+        features = features.to(self.device)
+        return mapper(features)
+
+    def run(
+        self, features: Union[torch.Tensor, np.ndarray]
+    ) -> Union[torch.Tensor, np.ndarray]:
+        """Subsamples features using Greedy Coreset.
+
+        Args:
+            features: [N x D]
+        """
+        if self.percentage == 1:
+            return features
+        self._store_type(features)
+        if isinstance(features, np.ndarray):
+            features = torch.from_numpy(features)
+        features = features.mean(dim=0)        
+        return self._restore_type(features)
 
 class ApproximateGreedyCoresetSampler(GreedyCoresetSampler):
     def __init__(
@@ -161,7 +202,7 @@ class ApproximateGreedyCoresetSampler(GreedyCoresetSampler):
 
         Args:
             features: [NxD] input feature bank to sample.
-        """
+        """                
         number_of_starting_points = np.clip(
             self.number_of_starting_points, None, len(features)
         )
