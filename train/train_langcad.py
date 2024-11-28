@@ -3,7 +3,7 @@ import time
 import os 
 import numpy as np
 import pandas as pd
-
+import wandb 
 import torch
 import torch.nn as nn 
 import torch.nn.functional as F 
@@ -11,14 +11,14 @@ from collections import OrderedDict
 from cosine_annealing_warmup import CosineAnnealingWarmupRestarts
 
 from utils.metrics import MetricCalculator
-from utils.log import AverageMeter,metric_logging
+from utils.log import AverageMeter,metric_logging, flatten_dict
 import warnings
 warnings.filterwarnings('ignore')
 
 _logger = logging.getLogger('train')
     
 
-def train(model, prompts, dataloader, optimizer, scheduler, accelerator, log_interval: int, cfg) -> dict:
+def train(model, class_prompts, dataloader, optimizer, scheduler, accelerator, log_interval: int, cfg) -> dict:
     batch_time_m = AverageMeter()
     data_time_m = AverageMeter()
     losses_m = AverageMeter()
@@ -26,13 +26,21 @@ def train(model, prompts, dataloader, optimizer, scheduler, accelerator, log_int
     neg_losses_m = AverageMeter()
     
     end = time.time()
-    
+        
     model.train()
+    dataset_size = len(dataloader.dataset)
     for idx, (images, positive, negative) in enumerate(dataloader):
         data_time_m.update(time.time() - end)
         
+        # Prompts 
+        batch_size = images.shape[0]
+        start_idx = idx * batch_size
+        end_idx = min(start_idx + batch_size, dataset_size)  # 데이터셋 크기를 초과하지 않도록 조정
+        key = list(class_prompts.prompts.keys())[0]
+        batch_prompts = class_prompts.prompts[key][start_idx:end_idx].to(accelerator.device)
+        
         # predict        
-        loss_dict = model(images, positive, negative, prompts)
+        loss_dict = model(images, positive, negative, batch_prompts)
         loss = loss_dict['total_loss']
         con_loss = loss_dict['contrastive_loss']
         neg_loss = loss_dict['negative_loss']
@@ -68,7 +76,7 @@ def train(model, prompts, dataloader, optimizer, scheduler, accelerator, log_int
     end = time.time()    
     return log 
 
-def test(model, prompts, dataloader, device, 
+def test(model, dataloader, device, 
          savedir, use_wandb, epoch, optimizer, epoch_time_m, class_name, current_class_name,
           knowledge=None, agnostic=False, last=False) -> dict:
     from utils.metrics import MetricCalculator, loco_auroc
@@ -79,16 +87,19 @@ def test(model, prompts, dataloader, device,
 
     #! Knowledge 
     model.anomaly_scorer.fit(knowledge)
+    
+    #! Prompts 
+    prompts = model.create_prompts().to(device)
     #! Inference     
     for idx, (images, labels, gts) in enumerate(dataloader):
 
         with torch.no_grad():
             if agnostic:
                 features = model.embed_img(images).detach().cpu().numpy()
-                query_features = np.mean(features,axis=(0,1))
-                prompts = model.pool.retrieve_prompts(prompts, query_features).to(device)
+                prompts = model.pool.retrieve_prompts(prompts, features).to(device)
+                key = list(prompts.prompts.keys())[0]
             
-            _, score, score_map = model.predict(images, prompts)
+            _, score, score_map = model.predict(images.to('cuda'), prompts.prompts[key].to('cuda'))
                 
         # Stack Scoring for metrics 
         pix_level.update(score_map,gts.type(torch.int))
@@ -118,10 +129,10 @@ def test(model, prompts, dataloader, device,
             )
     return test_result 
 
-def create_knowledge(model, prompts, trainloader,prompts_save:bool=False):
+def create_knowledge(model, class_prompts, trainloader, save:bool=False):
     '''
             Description 
-                - 학습 완료 후 현재 Task의 feature를 추출한 다음 Knowledge Pool에 저장 
+                - 학습 완료 후 현재 Task의 coreset feature를 추출한 다음 Knowledge Pool에 저장 
                 - feature 추출 -> coreset sampling -> knowledge pool에 extend 
             Return 
                 - 모든 feature 저장되어 있는 knowledge pool
@@ -129,26 +140,29 @@ def create_knowledge(model, prompts, trainloader,prompts_save:bool=False):
         ''' 
     features_bank = [] 
     model.eval()
+    start_idx = 0 
     for idx, (images, _, _) in enumerate(trainloader):
-        features = model.embed_img(images, prompts)
+        
+        batch_size = images.shape[0]                
+        end_idx = min(start_idx + batch_size, len(trainloader.dataset))  # 데이터셋 크기를 초과하지 않도록 조정
+        key = list(class_prompts.prompts.keys())[0]
+        
+        batch_prompts = class_prompts.prompts[key][start_idx:end_idx].to(images.device)
+        
+        start_idx = end_idx
+        
+        features = model.embed_img(images, batch_prompts.to(images.device))
         features_bank.append(features.detach().cpu().numpy())
         
     features_bank = np.concatenate(features_bank)
     sampled_features = model.fit(features_bank) # sampling feature to save in memory bank 
     
     # knowledge & key save 
-    class_name = trainloader.dataset.class_name
-    knowledge_pool = model.pool.get_knowledge(class_name = class_name, 
-                                                knowledge  = sampled_features)
-    _logger.info(f"knowledge 크기 : {len(knowledge_pool)}")
+    if save:
+        knowledge_pool = model.pool.get_knowledge(knowledge  = sampled_features)
+        _logger.info(f"knowledge 크기 : {len(knowledge_pool)}")
     
-    # prompts save    
-    if prompts_save: 
-        num_layer = prompts.num_layers[0]
-        model.pool.prompts.extend(
-            prompts[str(num_layer)].detach().cpu().numpy()
-        )
-    return knowledge_pool, sampled_features
+    return sampled_features
 
 
 def fit(
@@ -164,33 +178,54 @@ def fit(
         torch.cuda.empty_cache()
         _logger.info(f"Current Class Name : {class_name}")
         
+        # Init Dataloader 
+        trainloader, testloader = loader_dict[class_name]['train'],loader_dict[class_name]['test']
+        trainloader, model = accelerator.prepare(trainloader, model)
+        
         # Init prompt 
-        prompts = model.create_prompts()
+        class_prompts = model.create_prompts()
+        features_bank = [] 
+        model.eval()
+        for idx, (images, _, _) in enumerate(trainloader):
+            features = model.embed_img(images)
+            features_bank.append(features.detach().cpu().numpy())
+            
+        query_features = np.concatenate(features_bank)
+        class_prompts = model.pool.retrieve_prompts(class_prompts, query_features)        
+        _logger.info("Class prompts init done")
         
         # Init optimzier & SCheduler 
-        optimizer = __import__('torch.optim',fromlist='optim').__dict__[cfg.OPTIMIZER.opt_name](prompts.parameters(), lr=cfg.OPTIMIZER.lr, **cfg.OPTIMIZER.params)        
+        optimizer = __import__('torch.optim',fromlist='optim').__dict__[cfg.OPTIMIZER.opt_name](class_prompts.parameters(), lr=cfg.OPTIMIZER.lr, **cfg.OPTIMIZER.params)        
         if cfg.SCHEDULER.name is not None:
             scheduler = __import__('torch.optim.lr_scheduler', fromlist='lr_scheduler').__dict__[cfg.SCHEDULER.name](optimizer, **cfg.SCHEDULER.params)
         else:
-            scheduler = None
-            
-        # Init Dataloader 
-        trainloader, testloader = loader_dict[class_name]['train'],loader_dict[class_name]['test']
+            scheduler = None    
         
-        model, prompts, trainloader, testloader, optimizer, scheduler = accelerator.prepare(model, prompts, trainloader, testloader, optimizer, scheduler)
+        
+        class_prompts, testloader, optimizer, scheduler = accelerator.prepare(class_prompts, testloader, optimizer, scheduler)
+        
+        # wandb 
+        if use_wandb:
+            run = wandb.init(
+            project = cfg.TRAIN.wandb.project_name,
+            group   = class_name,  # 클래스별 그룹 설정
+            config  = flatten_dict(cfg),
+            name    = f"{class_name}_{cfg.DEFAULT.exp_name}"  # 각 클래스별로 실행 이름 지정
+        )
         
         # Train 
+        best = 0.0 
         for epoch in range(epochs):
             # train one epoch 
             if n_task !=0:
                 train_log = train(
-                    model        = model, 
-                    prompts      = prompts, 
-                    dataloader   = trainloader, 
-                    optimizer    = optimizer, 
-                    scheduler    = scheduler,
-                    accelerator  = accelerator, 
-                    log_interval = log_interval,
+                    model         = model, 
+                    class_prompts = class_prompts, 
+                    dataloader    = trainloader, 
+                    optimizer     = optimizer, 
+                    scheduler     = scheduler,
+                    accelerator   = accelerator, 
+                    log_interval  = log_interval,
                     cfg           = cfg 
                 )                
                 if scheduler:
@@ -204,16 +239,17 @@ def fit(
                     _logger.info(f"Train Epoch [{epoch}/{epochs}] " + train_log)
                     
             # Evaluation 
-            if ((epoch+1) % eval_interval)== 0: 
-                
-                # Create knowledge and save         
-                knowledge_pool, class_features = create_knowledge(model, prompts, trainloader, prompts_save=False)
-                
-                # Task-specific / agnostic inference 
-                for agnostic in [False]:
-                    test_metrics = test(
+            if ((epoch+1) % eval_interval)== 0:
+                if ((epoch+1) == epochs):
+                    class_features = create_knowledge(model, class_prompts, trainloader, save=True)
+                    knowledge = np.array(model.pool.knowledge)
+                else:                    
+                    class_features = create_knowledge(model, class_prompts, trainloader, save=False)
+                    knowledge = np.array(model.pool.knowledge)
+                    knowledge = np.concatenate([knowledge, class_features]) if len(knowledge) != 0 else class_features
+                    
+                test_metrics = test(
                                 model              = model, 
-                                prompts            = prompts.to(accelerator.device), 
                                 device             = accelerator.device,
                                 savedir            = savedir, 
                                 use_wandb          = use_wandb,
@@ -223,32 +259,18 @@ def fit(
                                 class_name         = class_name,
                                 current_class_name = class_name,
                                 dataloader         = testloader,
-                                knowledge          = [class_features],
-                                agnostic           = agnostic,
+                                knowledge          = [knowledge],
+                                agnostic           = True,
                                 last               = False
                             )
-                
-        # Create knowledge and save         
-        knowledge_pool, class_features = create_knowledge(model, prompts, trainloader, prompts_save=True)
-        
-        # Task-agnostic inference 
-        for agnostic in [True]:
-            test_metrics = test(
-                        model              = model, 
-                        prompts            = prompts.to(accelerator.device), 
-                        device             = accelerator.device,
-                        savedir            = savedir, 
-                        use_wandb          = use_wandb,
-                        epoch              = 0 if epochs == 0 else epoch,
-                        optimizer          = optimizer, 
-                        epoch_time_m       = epoch_time_m,
-                        class_name         = class_name,
-                        current_class_name = class_name,
-                        dataloader         = testloader,
-                        knowledge          = [class_features] if agnostic else np.expand_dims(np.array(model.pool.knowledge),0),
-                        agnostic           = agnostic,
-                        last               = False
+                result = pd.DataFrame(test_metrics).melt()['value'].mean()
+                if result > best:
+                    model.pool.save_pool(
+                        save_path = os.path.join(savedir, 'best_pool.pth')
                     )
+                    best = result 
+                    _logger.info(f"{class_name} best point : {epoch}")
+                
 
     # Pool save 
     model.pool.save_pool(
@@ -261,7 +283,6 @@ def fit(
         testloader = accelerator.prepare(testloader)
         test_metrics = test(
             model              = model, 
-            prompts            = prompts.to(accelerator.device), 
             device             = accelerator.device,
             savedir            = savedir, 
             use_wandb          = use_wandb,

@@ -4,6 +4,24 @@ import os
 import json 
 import wandb 
 from collections import OrderedDict
+import omegaconf 
+
+
+def flatten_dict(d, parent_key='', sep='_'):
+    """
+    중차됨된 딥서리를 플래티하게 변환하는 함수.
+    """
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, omegaconf.dictconfig.DictConfig):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        elif isinstance(v, list):
+            for idx, item in enumerate(v):
+                items.append((f"{new_key}{sep}{idx}", item))
+        else:
+            items.append((new_key, v))
+    return dict(items)
 
 class FormatterNoInfo(logging.Formatter):
     def __init__(self, fmt='%(levelname)s: %(message)s'):

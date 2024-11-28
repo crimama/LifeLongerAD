@@ -42,21 +42,15 @@ OPTIMIZER:
     - 0.999
 
 TRAIN:
-  epochs: 10
+  epochs: 50
   grad_accum_steps: 1
   mixed_precision: 'no'
   log_interval: 1
-  eval_interval: 50
+  eval_interval: 5
   wandb:
-    use: false
+    use: true
     project_name: LANGCAD
     
 SCHEDULER: 
   name: null
   params: null
-    
-CONTINUAL:
-  online: False 
-  unified: False
-  init_data_ratio: 1
-  nb_tasks: 1

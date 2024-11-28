@@ -1,4 +1,4 @@
-from .sampler import ApproximateGreedyCoresetSampler
+from .sampler import ApproximateGreedyCoresetSampler, PoolingSampler
 from .common import PatchMaker, NearestNeighbourScorer, RescaleSegmentor, FaissNN
 from sklearn.metrics.pairwise import cosine_similarity
 import torch 
@@ -7,16 +7,25 @@ import torch.nn.functional as F
 import timm 
 import open_clip 
 import numpy as np 
+import sys
+
+import sys 
 
 
 def _expand_token(token, batch_size: int):
     return token.view(1, 1, -1).expand(batch_size, -1, -1)    
 
+def l2_normalize(x, axis=-1, epsilon=1e-12):
+    norm = np.sqrt(np.sum(np.square(x), axis=axis, keepdims=True))
+    norm = np.maximum(norm, epsilon)  # Avoid division by zero
+    return x / norm
+
 class POOL:
-    def __init__(self):
+    def __init__(self,pool_size:int=100, dim=768):
         self.key = {}
         self.knowledge = [] 
-        self.prompts = []
+        # self.prompts = []
+        self.prompts = [np.random.random(dim) for i in range(pool_size)]
     def save_pool(self, save_path:str):
         pool_state = {'prompts':self.prompts, 'knowledge':self.knowledge}
         torch.save(pool_state,save_path)
@@ -28,9 +37,8 @@ class POOL:
         print('Load done')
 
         
-    def get_knowledge(self, class_name:str=None, knowledge=None):
+    def get_knowledge(self, knowledge=None):
         # key save 
-        self.key[class_name] = np.mean(knowledge,axis=0)
         self.knowledge.extend(knowledge)
         return self.knowledge
 
@@ -48,23 +56,35 @@ class POOL:
         return class_name 
     
     def retrieve_prompts(self, prompts, query_features:np.ndarray):
-        '''
-            저장해 있는 prompts 파라미터들 중 top k 선택 후 
-            input으로 들어온 prompt의 파라미터를 바꿔준 뒤 return 
-            일단 feature block은 3 한개로 고정하는 것으로 진행 
-        '''
-        key_prompt = np.vstack(self.prompts) # pool 에 저장되어 있는 prompts 
+        query_features = l2_normalize(query_features.mean(axis=1))
+        prompts_features = np.vstack(self.prompts)
+        key_features = l2_normalize(prompts_features)
         
-        similarities = cosine_similarity(
-            query_features.reshape(1,-1),
-            key_prompt
-        )
-        k = prompts.num_prompts  
-        top_k_indices = np.argsort(similarities)[0][-k:][::-1]  # 유사도가 높은 순으로 정렬
-        prompts_parms = [self.prompts[i] for i in top_k_indices]
-        num_layer = prompts.num_layers[0]
-        prompts.prompts[str(num_layer)] = nn.Parameter(torch.Tensor(prompts_parms)) # key : block 번호 
+        prompts_index = np.argsort(np.matmul(query_features, prompts_features.T),axis=1)[:,-6:]
+        
+        prompts_parms = prompts_features[prompts_index]
+        key = list(prompts.prompts.keys())[0]
+        prompts.prompts[key] = nn.Parameter(torch.Tensor(prompts_parms))
         return prompts 
+    
+    # def retrieve_prompts(self, prompts, query_features:np.ndarray):
+    #     '''
+    #         저장해 있는 prompts 파라미터들 중 top k 선택 후 
+    #         input으로 들어온 prompt의 파라미터를 바꿔준 뒤 return 
+    #         일단 feature block은 3 한개로 고정하는 것으로 진행 
+    #     '''
+    #     key_prompt = np.vstack(self.prompts) # pool 에 저장되어 있는 prompts 
+        
+    #     similarities = cosine_similarity(
+    #         query_features.reshape(1,-1),
+    #         key_prompt
+    #     )
+    #     k = prompts.num_prompts  
+    #     top_k_indices = np.argsort(similarities)[0][-k:][::-1]  # 유사도가 높은 순으로 정렬
+    #     prompts_parms = [self.prompts[i] for i in top_k_indices]
+    #     num_layer = prompts.num_layers[0]
+    #     prompts.prompts[str(num_layer)] = nn.Parameter(torch.Tensor(prompts_parms)) # key : block 번호 
+    #     return prompts 
     
 class LANGCAD(nn.Module):
     def __init__(
@@ -79,9 +99,11 @@ class LANGCAD(nn.Module):
         
         sampling_ratio: float = 0.1,
         n_neighbors: int = 5,
+        sampling_method:str = 'ApproximateGreedyCoresetSampler',
         
         num_prompts: int = 6,
         prompt_dim: int = 768,
+        pool_size: int = 100,
         prompt_method: str = 'intermediate', # intermediate, input, null 
         txt_emb_method =  None, # None, int 
         pre_task = 'margin' # margin, infonce
@@ -105,11 +127,11 @@ class LANGCAD(nn.Module):
         self.anomaly_segmentor = RescaleSegmentor(
             device=device, target_size=input_shape[-2:]
             )
-        self.featuresampler = ApproximateGreedyCoresetSampler(
+        self.featuresampler = eval(sampling_method)(
             percentage=sampling_ratio, device=device
             )
         
-        self.pool = POOL()
+        self.pool = POOL(pool_size=pool_size, dim=prompt_dim)
         self.criterion = ClipLoss(pre_task = pre_task)
         
         self.device         = device 
@@ -167,24 +189,22 @@ class LANGCAD(nn.Module):
         if self.prompt_method is not None: 
             # Prompt 추가 (input 방식일 경우 처음에 추가)
             if self.prompt_method == 'input' and prompts is not None:
-                prompt = prompts[self.num_layers[0]].unsqueeze(0).expand(x.shape[0], -1, -1)
-                x = torch.cat([x, prompt], dim=1)
+                # prompt = prompts[self.num_layers[0]].unsqueeze(0).expand(x.shape[0], -1, -1)
+                x = torch.cat([x, prompts], dim=1)
 
         features = []
         for i, blk in enumerate(self.encoders.visual.transformer.resblocks):
             if self.prompt_method == 'intermediate' and prompts is not None and self.prompt_method is not None and i in self.num_layers:
                 # Intermediate prompt 추가 방식
-                prompt = prompts[i].unsqueeze(0).expand(x.shape[0], -1, -1)
+                #!s prompt = prompts[i].unsqueeze(0).expand(x.shape[0], -1, -1)
                 if i == self.num_layers[0]:
-                    x = torch.cat([x, prompt], dim=1)
+                    x = torch.cat([x, prompts], dim=1)
                 else:
-                    x = torch.cat([x[:, :-prompt.shape[1], :], prompt], dim=1)
+                    x = torch.cat([x[:, :-prompts.shape[1], :], prompt], dim=1)
 
             x = blk(x)
             if i in self.num_layers:
-                if self.prompt_method is not None: 
-                    # features.append(x[:,1:-self.num_prompts,:])
-                    # features.append(x[:,-self.num_prompts:,:])                  
+                if self.prompt_method is not None:          
                     features.append(x)
                 else: 
                     features.append(x)
@@ -260,17 +280,15 @@ class LANGCAD(nn.Module):
     def fit(self, img_features:np.ndarray):
         if isinstance(img_features,torch.Tensor):
             img_features = img_features.detach().cpu().numpy()
-            
-        D = img_features.shape[-1]
-        img_features = img_features.reshape(-1,D).astype(np.float32) 
-        sample_features, sample_indices = self.featuresampler.run(img_features)
+                    
+        sample_features = self.featuresampler.run(img_features)
         return sample_features
 
     @torch.no_grad()
     def predict(self, img:torch.Tensor, prompts=None):
         shape = img.shape
         if prompts is not None:
-            img_features = self.embed_img(img, prompts)[:,:-prompts.num_prompts,:]
+            img_features = self.embed_img(img, prompts)[:,:-prompts.shape[1],:]
         else:
             img_features = self.embed_img(img)
             

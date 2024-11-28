@@ -51,7 +51,21 @@ def load_caption(datadir, dataset, class_names, json_name:str='caption.json') ->
             caption_dict[cn] = {}
     return caption_dict 
         
-
+def collate_fn(batch):
+    images = []
+    pos_texts = []
+    neg_texts = []
+    
+    for item in batch:
+        image, pos_text, neg_text = item
+        images.append(image)
+        pos_texts.append(pos_text)
+        neg_texts.extend(neg_text)
+    
+    # Stack images into a single tensor
+    images = torch.stack(images, dim=0)
+    
+    return images, pos_texts, neg_texts 
 
 def run(cfg):
     #! DIRECTORY SETTING 
@@ -111,6 +125,7 @@ def run(cfg):
             dataset     = trainset,
             batch_size  = cfg.DATASET.batch_size,
             num_workers = cfg.DATASET.num_workers,
+            collate_fn  = collate_fn,
             shuffle     = True 
         )    
 
@@ -126,9 +141,6 @@ def run(cfg):
     
     # optimizer 
     # if cfg.OPTIMIZER.name is not None:    
-    
-    if cfg.TRAIN.wandb.use:
-        wandb.init(name=f'{cfg.DEFAULT.exp_name}', project=cfg.TRAIN.wandb.project_name, config=OmegaConf.to_container(cfg))
 
                 
         

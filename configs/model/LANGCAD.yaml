@@ -1,6 +1,6 @@
 DEFAULT:
-  exp_name: 'contrastive with only hard negative + lr 0.005'
-  description: ''
+  exp_name: '1223-only_contrastive-l2p'
+  description: 'prompt l2p 방식으로 변경'
 
 MODEL:
   method: LANGCAD
@@ -15,10 +15,12 @@ MODEL:
     faiss_num_workers: 4
     num_layers: 3
     sampling_ratio: 0.1
+    sampling_method: ApproximateGreedyCoresetSampler # ApproximateGreedyCoresetSampler PoolingSampler
     num_prompts: 6
     prompt_dim: 768
+    pool_size: 100
     prompt_method: intermediate # intermediate input null
-    txt_emb_method: null #null:last intermediate
+    txt_emb_method: null # null:last intermediate
     pre_task: null #margin infonce null 
 
 
