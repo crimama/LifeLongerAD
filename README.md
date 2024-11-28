@@ -65,3 +65,20 @@ done
 - commit : [24-11-25] num_neg_sample / sampling method 
   - num neg sample 한 번에 2개 이상 load 할 수 있도록 데이터셋, 모델 수정 
   - coresetsampling - sampling 수 int로 입력 받아서 처리 할 수 있도록 수정 
+
+
+**2024-11-25**
+- commit : [24-11-25] feature sampler - poolingsampler
+
+**2024-11-28**
+- commit : [24-11-28] prompts init change 
+  - prompt 처음에 100개 프롬프트 같이 초기화 후 학습할 때 실시간으로 리트리빙 하여 사용
+  - 기존에는 하나의 prompts를 검색 후 모든 데이터에 대해 동일하게 적용 
+  - 그러나 변경된 것은 각 인스턴스에 대해 각기 다른 prompts indexing 후 다르게 사용  
+  - file 
+    main.py : collate_fn , wandb 
+    mvtecad.yaml : remove continual prams 
+    LANGCAD.yaml : sampler 
+    model.py : prompts method, retrive, pool 
+    train_langcad.py : prompts, pool, evalute, wandb 
+    log.py : wandb 
