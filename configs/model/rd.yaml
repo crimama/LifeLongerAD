@@ -6,7 +6,10 @@ OPTIMIZER:
     - 0.5
     - 0.999
     
-
+TRAIN:
+  epochs: 32
+  mixed_precision: 'no'
+  
 MODEL:
   method: ReverseDistillation
   backbone: wide_resnet50_2

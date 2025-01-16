@@ -92,11 +92,10 @@ def parser(jupyter:bool = False, default_setting:str = None, model_setting:str =
         pass
     
     #! Continual Setting 
-    # if cfg.CONTINUAL.unified:
-    #     cfg.DATASET.class_name = 'all'
         
-    # if cfg.DATASET.class_name == 'all':
-    #     cfg.CONTINUAL.unified = True
+    if cfg.CONTINUAL.online:
+        cfg.TRAIN.epochs = 1
+        cfg.DATASET.batch_size = 1
         
         
     
@@ -106,6 +105,8 @@ def parser(jupyter:bool = False, default_setting:str = None, model_setting:str =
     #     cfg.DEFAULT.exp_name = f"{cfg.DEFAULT.exp_name}-{cfg.MODEL.params.weight_method}-sampling_ratio_{cfg.MODEL.params.sampling_ratio}" 
     # else:
     #     cfg.DEFAULT.exp_name = f"{cfg.DEFAULT.exp_name}-online_{cfg.CONTINUAL.online}-unified_{cfg.CONTINUAL.unified}-init_ratio_{cfg.CONTINUAL.init_data_ratio}-nb_tasks_{cfg.CONTINUAL.nb_tasks}"
+    cfg.DEFAULT.exp_name = f"{cfg.DEFAULT.exp_name}-Continual_{cfg.CONTINUAL.continual}-online_{cfg.CONTINUAL.online}"
+    
     
     # Print Experiment name 
     print(f"\n Experiment Name : {cfg.DEFAULT.exp_name}\n")

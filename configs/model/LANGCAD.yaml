@@ -1,5 +1,5 @@
 DEFAULT:
-  exp_name: 'contrastive with only hard negative + lr 0.005'
+  exp_name: 'test-all-continual-scheduler'
   description: ''
 
 MODEL:
@@ -25,19 +25,29 @@ MODEL:
 DATASET:
   aug_info: 
     - PatchCore
-  params:
-    num_neg_sample: 1
-    text_method: pre-gen #pre-gen easy
 
 
 
 OPTIMIZER:
   opt_name: Adam
-  lr: 0.005 #5e-3
+  lr: 0.005
   params:
-    betas: 
+    betas:
     - 0.5
     - 0.999
 
+SCHEDULER:
+  name: CosineAnnealingWarmRestarts
+  params:
+    T_0: 5
+    T_mult: 1
+    eta_min: 0.0005
+
+# SCHEDULER:
+#   name: StepLR
+#   params:
+#     step_size: 10
+#     gamma: 0.9
+
 TRAIN:
-  epochs: 20
+  epochs: 400

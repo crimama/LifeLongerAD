@@ -1,0 +1,22 @@
+OPTIMIZER:
+  opt_name: Adam
+  lr: 1e-4
+  params:
+    weight_decay: 1e-5
+
+TRAIN:
+  epochs: 100
+  mixed_precision: 'no'
+
+DATASET:
+  batch_size: 16
+  
+
+
+MODEL:
+  method: Draem
+  backbone: wide_resnet50_2
+  params:
+    enable_sspcab: false
+    sspcab_lambda: 0.1
+    anomaly_source_path: /Volume/VAD/Data/dtd

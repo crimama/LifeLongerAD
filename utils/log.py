@@ -105,7 +105,7 @@ def save_metrics_to_csv(metrics, csv_filename):
         "pix_level_auroc": metrics['test_metrics']['pix_level']['auroc'],
         "pix_level_average_precision": metrics['test_metrics']['pix_level']['average_precision'],
         "epoch_time": metrics['epoch_time'],
-        "task agnostic" : metrics['task_agnostic']
+        "last" : metrics['last']
     }
 
     # 파일이 존재하는지 확인해서 존재하지 않으면 헤더를 추가

@@ -79,28 +79,7 @@ class CViT(nn.Module):
             x - self.encoders.transformer(x, attn_mask=self.encoders.attn_mask)
             x = self.encoders.ln_final(x)                    
         return x
-    
-    # def _embed_img(self, img):
-    #     x = self.encoders.visual.conv1(img)
-    #     x = x.reshape(x.shape[0],x.shape[1],-1)
-    #     x = x.permute(0,2,1)
-        
-    #     x = torch.cat([_expand_token(self.encoders.visual.class_embedding, x.shape[0]).to(x.dtype), x], dim=1)
-        
-    #     x = x + self.encoders.visual.positional_embedding.to(x.dtype)
-    #     x = self.encoders.visual.patch_dropout(x)
-    #     x = self.encoders.visual.ln_pre(x)
-        
-    #     features = [] 
-    #     def hook_fn(module, input, output):
-    #         features.append(output)
-                        
-    #     for n_l in self.num_layers:                        
-    #         self.encoders.visual.transformer.resblocks[n_l].register_forward_hook(hook_fn)
-        
-    #     x = self.encoders.visual.transformer(x)
-        
-    #     return torch.cat([feat.unsqueeze(0) for feat in features]).mean(0)[:,1:,:]
+
     def _embed_img(self, img):
         x = self.encoders.visual.conv1(img)
         x = x.reshape(x.shape[0], x.shape[1], -1)

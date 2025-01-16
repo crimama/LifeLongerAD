@@ -1,11 +1,11 @@
 DEFAULT:
-  seed: 0
+  seed: 42
   savedir: ./results
   exp_name: '.'
 
 DATASET:
   datadir: ../Data
-  batch_size: 128
+  batch_size: 32
   test_batch_size: 32
   num_workers: 0
   dataset_name: MVTecAD  # [AnomalyDataset,MVTecAD]
@@ -32,10 +32,9 @@ DATASET:
     - capsule
     - screw
 
-
 OPTIMIZER:
   opt_name: Adam
-  lr: 0.005
+  lr: 0.0005
   params:
     betas: 
     - 0.5
@@ -45,18 +44,20 @@ TRAIN:
   epochs: 10
   grad_accum_steps: 1
   mixed_precision: 'no'
-  log_interval: 1
-  eval_interval: 50
+  log_interval: 10
+  eval_interval: 1
   wandb:
     use: false
     project_name: LANGCAD
     
+    
+CONTINUAL:
+  continual : True
+  online: false
+  method: 
+    name: EMPTY
+
 SCHEDULER: 
   name: null
   params: null
-    
-CONTINUAL:
-  online: False 
-  unified: False
-  init_data_ratio: 1
-  nb_tasks: 1
+
