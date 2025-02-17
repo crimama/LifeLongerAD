@@ -7,9 +7,9 @@ gpu_id=$1
 
 # GPU ID에 따라 method_setting 설정
 if [ "$gpu_id" -eq 0 ]; then
-    method_setting="rd"
+    method_setting="cae"
 elif [ "$gpu_id" -eq 1 ]; then
-    method_setting="rd"
+    method_setting="cae"
     gpu_id=0
 else
     echo "Invalid GPU ID. Please use 0 or 1."
@@ -24,7 +24,7 @@ do
     if [ "$c" = "true" ]; then
         # continual_method="EMPTY EWC"
         continual_method="EMPTY"
-        online_options="true"
+        online_options="false"
     else
         continual_method="EMPTY"
         online_options="true false"

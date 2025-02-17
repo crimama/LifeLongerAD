@@ -1,0 +1,22 @@
+OPTIMIZER:
+  opt_name: Adam
+  lr: 0.001
+  params:
+    betas: 
+    - 0.5
+    - 0.999
+    
+TRAIN:
+  epochs: 32
+  mixed_precision: 'no'
+  
+MODEL:
+  method: ConvAutoencoder
+  backbone: wide_resnet50_2
+  # backbone: false
+  params:
+    encoder_channels:
+      - 16
+      - 32
+      - 64
+    

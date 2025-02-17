@@ -109,9 +109,9 @@ def run(cfg):
 
 
                 
-        
-    __import__(f'train.train_{cfg.MODEL.method.lower()}', fromlist=f'train_{cfg.MODEL.method.lower()}').fit(
-            model         = model, 
+    from train import fit 
+    # __import__(f'train.train_{cfg.MODEL.method.lower()}', fromlist=f'train_{cfg.MODEL.method.lower()}').fit(
+    fit(    model         = model, 
             loader_dict   = loader_dict,
             accelerator   = accelerator,
             epochs        = cfg.TRAIN.epochs, 

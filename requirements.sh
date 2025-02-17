@@ -1,17 +1,19 @@
 pip install accelerate==0.18.0
 pip install wandb
-pip install torchvision
+# pip install torchvision
 pip install omegaconf
 pip install seaborn
 pip install easydict 
 pip install pyDantic
 pip install scikit-image
-pip install torchmetrics==0.10.3
+# pip install torchmetrics==0.10.3
+pip install torchmetrics
 pip install albumentations
-pip install pytorch-lightning==1.9.5
+# pip install pytorch-lightning==1.9.5
 pip install einops
-pip install timm==0.6.5
-pip install pytorch==1.9.5
+# pip install timm==0.6.5
+pip install timm 
+# pip install pytorch==1.9.5
 pip install kornia==0.6.9
 pip install imgaug==0.4.0
 pip install FrEIA==0.2
@@ -26,10 +28,10 @@ pip install opencv-python==4.3.0.38
 apt-get install libglib2.0-0
 
 
-pip install torch==1.10.1+cu111 torchvision==0.11.2+cu111 torchaudio==0.10.1 -f https://download.pytorch.org/whl/cu111/torch_stable.html
-pip install tqdm tensorboard setuptools==58.0.4 opencv-python scikit-image scikit-learn matplotlib seaborn ftfy regex numpy==1.26.4
+# pip install torch==1.10.1+cu111 torchvision==0.11.2+cu111 torchaudio==0.10.1 -f https://download.pytorch.org/whl/cu111/torch_stable.html
+# pip install tqdm tensorboard setuptools==58.0.4 opencv-python scikit-image scikit-learn matplotlib seaborn ftfy regex numpy==1.26.4
 
-pip install 'git+https://github.com/katsura-jp/pytorch-cosine-annealing-with-warmup'
+# pip install 'git+https://github.com/katsura-jp/pytorch-cosine-annealing-with-warmup'
 
 
 # timm                         0.6.5
