@@ -18,7 +18,7 @@ warnings.filterwarnings('ignore')
 _logger = logging.getLogger('train')
     
 
-def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_interval: int, epoch, epochs, savedir, cfg) -> dict:
+def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_interval: int, epoch, epochs, savedir, cfg, drift_monitor) -> dict:
     
     def collect_gradients(cfg, model, all_gradients, epoch, step):
         if ((cfg.CONTINUAL.online and (step % 10 == 0)) or (not cfg.CONTINUAL.online and ((epoch) % 2 == 0) and (step % 4 == 0))):
@@ -54,7 +54,6 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
     def save_gradients_if_needed(cfg, dataloader, epoch, savedir, all_gradients):
         if (cfg.CONTINUAL.online or (not cfg.CONTINUAL.online and ((epoch) % 2 == 0))):
             current_class_name_ = dataloader.dataset.class_name
-            os.makedirs(f"{savedir}/gradients", exist_ok=True)
             np.save(f"{savedir}/gradients/{current_class_name_}_gradient_log_epoch_{epoch}.npy", all_gradients)
     
     batch_time_m = AverageMeter(); data_time_m = AverageMeter(); losses_m = AverageMeter()
@@ -73,6 +72,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
         
         losses_m.update(loss.item())
         collect_gradients(cfg, model, all_gradients, epoch, step)
+        drift_monitor.update(outputs[0][0])
         optimizer.step()
         
         batch_time_m.update(time.time() - end)
@@ -83,7 +83,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
         do_online_inference(cfg, step, dataloader, model, accelerator, savedir, epoch, testloader, current_class_name, batch_time_m, optimizer)
         end = time.time()
     
-    save_gradients_if_needed(cfg, dataloader, epoch, savedir, all_gradients)
+    #! save_gradients_if_needed(cfg, dataloader, epoch, savedir, all_gradients)
     return {"loss": losses_m.avg, "gradients": all_gradients, "class_name": current_class_name}
 
 
@@ -134,6 +134,10 @@ def fit(
     epoch_time_m = AverageMeter()
     end = time.time() 
     
+    #drift monitor 
+    from utils.log import DriftMonitor
+    drift_monitor = DriftMonitor(log_dir=os.path.join(savedir,'DriftMonitor.log'))
+    
     for n_task, (current_class_name, class_loader_dict) in enumerate(loader_dict.items()):
         torch.cuda.empty_cache()
         _logger.info(f"Current Class Name : {current_class_name}")        
@@ -165,7 +169,8 @@ def fit(
                     epoch        = epoch,
                     epochs       = epochs,
                     savedir      = savedir, 
-                    cfg          = cfg 
+                    cfg          = cfg,
+                    drift_monitor= drift_monitor 
                 )
             if scheduler:
                 scheduler.step()
@@ -178,7 +183,8 @@ def fit(
         num_current_class = list(loader_dict.keys()).index(current_class_name)
         
         # model save
-        torch.save(model.state_dict(),f"{savedir}/{current_class_name}_model.pth")
+        os.makedirs(f"{savedir}/model_weight/", exist_ok=True)
+        torch.save(model.state_dict(),f"{savedir}/model_weight/{current_class_name}_model.pth")
     
         if cfg.CONTINUAL.continual:
             # Continual method 
