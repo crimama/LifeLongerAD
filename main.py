@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd 
 import os
 import random
 import wandb
@@ -44,7 +45,12 @@ def run(cfg):
                             cfg.DEFAULT.exp_name,
                             f"seed_{cfg.DEFAULT.seed}"
                             )    
+    
+    # make directory 
     os.makedirs(savedir, exist_ok=True)    
+    os.makedirs(os.path.join(savedir,'results'))
+    os.makedirs(os.path.join(savedir, 'gradients'), exist_ok=True)
+    os.makedirs(os.path.join(savedir, 'model_weight'), exist_ok=True)
     OmegaConf.save(cfg, os.path.join(savedir, 'configs.yaml'))
     setup_default_logging(log_path=os.path.join(savedir,'train.log'))
     
@@ -121,13 +127,35 @@ def run(cfg):
             savedir       = savedir,
             seed          = cfg.DEFAULT.seed,
             cfg           = cfg
-        )     
+        )
     
-
+    # final evaluation & save
+    
+    
+def metric_save(cfg, continual:bool = True):
+    from utils.metrics import compute_continual_result
+    savedir = os.path.join(
+                            cfg.DEFAULT.savedir,
+                            cfg.MODEL.method,
+                            cfg.DATASET.dataset_name,
+                            cfg.DEFAULT.exp_name,
+                            f"seed_{cfg.DEFAULT.seed}",
+                            )
+    # load results
+    results = pd.read_csv(os.path.join(savedir,'results/result_log.csv'))
+    main_result, forgetting_result = compute_continual_result(results, continual=continual)
+    
+    # save main result, forgetting result 
+    main_result.to_csv(os.path.join(savedir,'results','main.csv'))
+    forgetting_result.to_csv(os.path.join(savedir,'results','forgetting.csv'))
+    
+        
 if __name__=='__main__':
     
     # config
     cfg = parser()
-    
+
     # run
     run(cfg)
+    
+    metric_save(cfg,continual=cfg.CONTINUAL.continual)

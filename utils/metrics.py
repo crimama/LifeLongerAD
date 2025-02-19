@@ -7,6 +7,83 @@ from torchmetrics import AUROC
 from statistics import mean
 import torch 
 
+def compute_continual_result(result: pd.DataFrame, 
+                              metric_list: list = ['img_level_auroc','img_level_auroc','img_level_average_precision','pix_level_average_precision'],
+                              continual: bool = True) -> tuple:
+    """
+    주어진 결과 DataFrame에서 최종 결과(main_result)와 잊어버림(forgetting) 지표를 계산합니다.
+    
+    Parameters:
+        result (pd.DataFrame): 결과 데이터프레임. 
+            반드시 'last', 'GT_class_name', 'class_name', 'task', 'epoch', 'epoch_time' 열이 포함되어 있어야 합니다.
+        metric_list (list, optional): 계산할 메트릭 이름 리스트. 
+            기본값은 ['img_level_auroc','img_level_auroc','img_level_average_precision','pix_level_average_precision'] 입니다.
+    
+    Returns:
+        main_result (pd.DataFrame): 최종 결과 DataFrame (각 메트릭 평균 포함)
+        forgetting_result (pd.DataFrame): 클래스별 Forgetting, BWT, FWT 결과 DataFrame
+    """        
+    # === Last result 및 AA 계산 ===
+    last_class = result['GT_class_name'].iloc[-1]
+    class_name_list = result['class_name'].unique()
+    
+    if continual:
+        main_result = result.loc[(result['last'] == 1) & (result['GT_class_name'] == last_class)] \
+                            .reset_index(drop=True) \
+                            .drop(columns=['task', 'epoch', 'GT_class_name', 'epoch_time'])
+        
+        # AA: class_name, last 열을 제외한 열의 평균값 계산 후 마지막 행에 추가
+        aa_values = main_result.drop(columns=['class_name', 'last']).mean()
+        aa_values['class_name'] = 'AA'
+        main_result = pd.concat([main_result, pd.DataFrame(aa_values).T], ignore_index=True)
+    
+        # === Forgetting, BWT, FWT 계산 ===
+        
+        forgetting_result = pd.DataFrame()        
+        # 첫 클래스는 제외 (예: 첫 클래스는 기준이므로)
+        for cln in class_name_list[1:]:
+            # 현재 클래스에 해당하는 데이터 추출 (불필요한 열 제거)
+            temp = result[result['class_name'] == cln].drop(columns=['task', 'epoch', 'epoch_time'])
+            
+            # 마지막 결과 행 추출 (last == 1)
+            last_value = temp[temp['last'] == 1].iloc[-1]
+            
+            # Average Forgetting (AF): 
+            # last==0 인 경우의 수치형 값 최대치와 last_value의 차이를 계산
+            max_value = temp[temp['last'] == 0].select_dtypes(include=['number']).max()
+            AF = max_value - last_value
+            
+            # Backward Transfer (BWT):
+            # 현재 클래스에 해당하는 GT_class_name을 가진 행에서 계산.
+            bwt_value = temp[(temp['last'] == 1) & (temp['GT_class_name'] == cln)] \
+                            .drop(columns=['class_name', 'GT_class_name'])
+            # last_value와 bwt_value의 차이에서 마지막 행 값 사용
+            BWT = (last_value - bwt_value).iloc[-1]
+            
+            # Forward Transfer (FWT):
+            # last==1인 경우 첫 행에서 계산.
+            fwt_value = temp[temp['last'] == 1] \
+                            .drop(columns=['class_name', 'GT_class_name']).iloc[0]
+            FWT = (bwt_value - fwt_value).iloc[-1]
+            
+            # 각 메트릭에 대해 AF, BWT, FWT 값을 DataFrame에 정리
+            # eval 대신 직접 인덱싱하여 값을 추출합니다.
+            data = {
+                'AF': [AF[m] for m in metric_list],
+                'BWT': [BWT[m] for m in metric_list],
+                'FWT': [FWT[m] for m in metric_list]
+            }
+            df_metrics = pd.DataFrame(data, index=metric_list).reset_index().rename(columns={'index': 'metric'})
+            df_metrics['class_name'] = cln
+            
+            forgetting_result = pd.concat([forgetting_result, df_metrics], ignore_index=True)
+                
+    else:        
+        main_result = pd.DataFrame([result[result['GT_class_name'] == cln].iloc[-1] for cln in class_name_list]).drop(columns=['task','epoch','class_name','last','epoch_time']).reset_index(drop=True)
+        forgetting_result =  pd.DataFrame()
+    return main_result, forgetting_result
+    
+
 def loco_auroc(metric, dataloader):
     results = {} 
     metric.preds = np.concatenate(metric.preds)

@@ -3,7 +3,89 @@ import logging.handlers
 import os 
 import json 
 import wandb 
+import numpy as np
 from collections import OrderedDict
+import torch
+from river.drift import ADWIN
+from logging.handlers import RotatingFileHandler
+
+class DriftMonitor:
+    def __init__(self, log_dir: str = None, log_path: str = None, logger_name: str = "DriftMonitor.log"):
+        """
+        ADWIN을 이용한 드리프트 모니터링 클래스.
+        
+        Args:
+            log_dir (str): 로그 파일을 저장할 디렉토리. log_path가 None일 때 사용.
+            log_path (str): 로그 파일 전체 경로. 지정되면 RotatingFileHandler를 사용.
+            logger_name (str): logger의 이름.
+        """
+        self.adwin = ADWIN()
+        self.window_means = []
+        self.window_widths = []
+        self.drift_magnitudes = []
+        self.prev_window_mean = None
+        self.step = 0
+
+        # Logger 생성
+        self.logger = logging.getLogger(logger_name)
+        self.logger.setLevel(logging.INFO)
+        self.logger.propagate = False  # 상위 로거로 전달 방지
+        self.logger.handlers.clear()  # 기존 핸들러 제거
+
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+        # 터미널 출력 제거 (StreamHandler를 추가하지 않음)
+
+        # log_path가 지정되면 RotatingFileHandler 사용
+        if log_path:
+            log_dir_path = os.path.dirname(log_path)
+            if log_dir_path and not os.path.exists(log_dir_path):
+                os.makedirs(log_dir_path, exist_ok=True)
+            file_handler = RotatingFileHandler(log_path, maxBytes=2 * (1024 ** 2), backupCount=3)
+            file_handler.setFormatter(formatter)
+            self.logger.addHandler(file_handler)
+        elif log_dir is not None:
+            os.makedirs(log_dir, exist_ok=True)
+            file_path = os.path.join(log_dir, f"{logger_name}")
+            file_handler = logging.FileHandler(file_path)
+            file_handler.setFormatter(formatter)
+            self.logger.addHandler(file_handler)
+
+    def update(self, features: torch.Tensor):
+        """
+        입력된 features(예: latent representation)를 이용하여 L2 norm을 계산한 후, ADWIN에 업데이트하고,
+        내부 통계를 기록합니다.
+        
+        Args:
+            features (torch.Tensor): 모델의 latent representation.
+            
+        Returns:
+            detected (bool): 드리프트가 감지되었으면 True.
+            current_mean (float): 현재 ADWIN 윈도우의 평균.
+            drift_magnitude (float): 이전 평균과의 차이 (드리프트 강도).
+        """
+        latent = features.detach().cpu().numpy()
+        norm_value = np.linalg.norm(latent.reshape(latent.shape[0], -1), axis=1)
+
+        for norm in norm_value:
+            self.adwin.update(norm)
+            current_mean = self.adwin.estimation
+            current_width = self.adwin.width
+
+            self.window_means.append(current_mean)
+            self.window_widths.append(current_width)
+
+            if self.prev_window_mean is not None:
+                drift_magnitude = abs(current_mean - self.prev_window_mean)
+            else:
+                drift_magnitude = 0.0
+            self.drift_magnitudes.append(drift_magnitude)
+
+            self.prev_window_mean = current_mean
+            self.step += 1
+
+            # 로그 기록 (터미널 출력 없이 파일에만 기록됨)
+            self.logger.info(f"Step {self.step}: current_mean={current_mean:.4f}, width={current_width}, magnitude={drift_magnitude:.4f}")
 
 class FormatterNoInfo(logging.Formatter):
     def __init__(self, fmt='%(levelname)s: %(message)s'):
@@ -86,7 +168,7 @@ def metric_logging(savedir, use_wandb=None,
     # with open(os.path.join(savedir, 'result.txt'),  'a') as f:
     #     f.write(json.dumps(metrics) + "\n")
     
-    save_metrics_to_csv(dict(metrics), os.path.join(savedir,'result.csv'))
+    save_metrics_to_csv(dict(metrics), os.path.join(savedir,'results/result_log.csv'))
     
     if use_wandb:
         wandb.log(metrics, step=epoch)
