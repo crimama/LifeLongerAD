@@ -11,7 +11,7 @@ from collections import OrderedDict
 from cosine_annealing_warmup import CosineAnnealingWarmupRestarts
 
 from utils.metrics import MetricCalculator
-from utils.log import AverageMeter,metric_logging
+from utils.log import AverageMeter,metric_logging,DriftMonitor
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -135,10 +135,12 @@ def fit(
     end = time.time() 
     
     #drift monitor 
-    from utils.log import DriftMonitor
-    drift_monitor = DriftMonitor(log_dir=os.path.join(savedir,'DriftMonitor.log'))
+    
     
     for n_task, (current_class_name, class_loader_dict) in enumerate(loader_dict.items()):
+        if (n_task == 0) or (cfg.CONTINUAL.continual==False):
+            drift_monitor = DriftMonitor(log_dir=os.path.join(savedir,'DriftMonitor.log'))
+        
         torch.cuda.empty_cache()
         _logger.info(f"Current Class Name : {current_class_name}")        
             
