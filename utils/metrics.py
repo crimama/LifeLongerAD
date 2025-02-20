@@ -57,14 +57,14 @@ def compute_continual_result(result: pd.DataFrame,
             # 현재 클래스에 해당하는 GT_class_name을 가진 행에서 계산.
             bwt_value = temp[(temp['last'] == 1) & (temp['GT_class_name'] == cln)] \
                             .drop(columns=['class_name', 'GT_class_name'])
-            # last_value와 bwt_value의 차이에서 마지막 행 값 사용
-            BWT = (last_value - bwt_value).iloc[-1]
+            # last_value와 bwt_value의 차이에서 마지막 행 값 사용            
+            BWT = (last_value - bwt_value)
             
             # Forward Transfer (FWT):
             # last==1인 경우 첫 행에서 계산.
             fwt_value = temp[temp['last'] == 1] \
                             .drop(columns=['class_name', 'GT_class_name']).iloc[0]
-            FWT = (bwt_value - fwt_value).iloc[-1]
+            FWT = (bwt_value - fwt_value)
             
             # 각 메트릭에 대해 AF, BWT, FWT 값을 DataFrame에 정리
             # eval 대신 직접 인덱싱하여 값을 추출합니다.
