@@ -3,7 +3,7 @@ import argparse
 from datasets import stats
 from easydict import EasyDict
 import os 
-
+import importlib 
 
 def convert_type(value):
     # None
@@ -91,8 +91,7 @@ def parser(jupyter:bool = False, default_setting:str = None, model_setting:str =
     else:
         pass
     
-    #! Continual Setting 
-        
+    #! Continual Setting         
     if cfg.CONTINUAL.online:
         cfg.TRAIN.epochs = 1
         cfg.DATASET.batch_size = 1                
@@ -106,10 +105,13 @@ def parser(jupyter:bool = False, default_setting:str = None, model_setting:str =
     
     cfg.DEFAULT.exp_name = f"{cfg.DEFAULT.exp_name}-Continual_{cfg.CONTINUAL.continual}-online_{cfg.CONTINUAL.online}"
     
+    # IUF Config update 
+    if cfg.MODEL.method == 'IUF':
+        cfg = iuf_config_update(cfg)
+        
     
     # Print Experiment name 
-    print(f"\n Experiment Name : {cfg.DEFAULT.exp_name}\n")
-    
+    print(f"\n Experiment Name : {cfg.DEFAULT.exp_name}\n")            
     return cfg  
 
 def patchcore_arguments(cfg):
@@ -120,3 +122,50 @@ def patchcore_arguments(cfg):
         cfg.MODEL.params.device = 'cuda:0'    
         
     return cfg 
+
+
+
+def iuf_config_update(config):
+    # update feature size
+    _, reconstruction_type = config.MODEL.params.net_cfg[2].type.rsplit(".", 1)
+    if reconstruction_type == "UniAD":
+        input_size = [config.DATASET.img_size for i in range(2)]
+        outstride = config.MODEL.params.net_cfg[1].kwargs.outstrides[0]
+        assert (
+            input_size[0] % outstride == 0
+        ), "input_size must could be divided by outstrides exactly!"
+        assert (
+            input_size[1] % outstride == 0
+        ), "input_size must could be divided by outstrides exactly!"
+        feature_size = [s // outstride for s in input_size]
+        config.MODEL.params.net_cfg[2].kwargs.feature_size = feature_size
+
+    # update planes & strides
+    backbone_path, backbone_type = config.MODEL.params.net_cfg[0].type.rsplit(".", 1)
+    module = importlib.import_module(backbone_path)
+    backbone_info = getattr(module, "backbone_info")
+    backbone = backbone_info[backbone_type]
+    outblocks = None
+    if "efficientnet" in backbone_type:
+        outblocks = []
+    outstrides = []
+    outplanes = []
+    for layer in config.MODEL.params.net_cfg[0].kwargs.outlayers:
+        if layer not in backbone["layers"]:
+            raise ValueError(
+                "only layer {} for backbone {} is allowed, but get {}!".format(
+                    backbone["layers"], backbone_type, layer
+                )
+            )
+        idx = backbone["layers"].index(layer)
+        if "efficientnet" in backbone_type:
+            outblocks.append(backbone["blocks"][idx])
+        outstrides.append(backbone["strides"][idx])
+        outplanes.append(backbone["planes"][idx])
+    if "efficientnet" in backbone_type:
+        config.MODEL.params.net_cfg[0].kwargs.pop("outlayers")
+        config.MODEL.params.net_cfg[0].kwargs.outblocks = outblocks
+    config.MODEL.params.net_cfg[0].kwargs.outstrides = outstrides
+    config.MODEL.params.net_cfg[1].kwargs.outplanes = sum(outplanes)
+
+    return config
