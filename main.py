@@ -48,7 +48,7 @@ def run(cfg):
     
     # make directory 
     os.makedirs(savedir, exist_ok=True)    
-    os.makedirs(os.path.join(savedir,'results'))
+    os.makedirs(os.path.join(savedir,'results'), exist_ok=True)
     os.makedirs(os.path.join(savedir, 'gradients'), exist_ok=True)
     os.makedirs(os.path.join(savedir, 'model_weight'), exist_ok=True)
     OmegaConf.save(cfg, os.path.join(savedir, 'configs.yaml'))
@@ -71,11 +71,6 @@ def run(cfg):
                 backbone    = cfg.MODEL.backbone,
                 **cfg.MODEL.params
                 )
-    
-    # continual method wrapping 
-    model = __import__('continual').__dict__[cfg.CONTINUAL.method.name](
-        model = model
-    )
     
     #! LOAD DATASET FOR CONTINUAL LEARNING     
     loader_dict = {}
@@ -115,9 +110,16 @@ def run(cfg):
 
 
                 
-    from train import fit 
-    # __import__(f'train.train_{cfg.MODEL.method.lower()}', fromlist=f'train_{cfg.MODEL.method.lower()}').fit(
-    fit(    model         = model, 
+    
+    if cfg.MODEL.method == 'IUF':
+        TRAINER = __import__(f'train.train_{cfg.MODEL.method.lower()}', fromlist=f'train_{cfg.MODEL.method.lower()}').fit
+        
+    else: 
+        from train import fit 
+        TRAINER = fit
+    
+    TRAINER(
+            model         = model, 
             loader_dict   = loader_dict,
             accelerator   = accelerator,
             epochs        = cfg.TRAIN.epochs, 
