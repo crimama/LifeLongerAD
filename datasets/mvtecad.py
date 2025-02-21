@@ -10,6 +10,24 @@ from typing import Literal
 import torch 
 from torch.utils.data import Dataset
 
+class_label_mapping = {
+    'bottle': 0,
+    'cable': 1,
+    'capsule': 2,
+    'carpet': 3,
+    'grid': 4,
+    'hazelnut': 5,
+    'leather': 6,
+    'metal_nut': 7,
+    'pill': 8,
+    'screw': 9,
+    'tile': 10,
+    'toothbrush': 11,
+    'transistor': 12,
+    'wood': 13,
+    'zipper': 14
+}
+
 class MVTecAD(Dataset):
     '''
     Example 
@@ -70,15 +88,17 @@ class MVTecAD(Dataset):
         img = img.type(torch.float32)
         label = self.labels[idx]
         
+        class_label = class_label_mapping[self.class_name]
+        
         if self.train_mode == 'test': # Test
             gt = self._get_ground_truth(img_dir,img)
             gt = (gt > 0).float()            
             
-            return img, label, gt
+            return img, label, class_label, gt
         
                 
         else:
-            return img,label 
+            return img, label, class_label 
         
         
     
