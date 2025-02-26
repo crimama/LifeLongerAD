@@ -86,13 +86,13 @@ class MVTecAD(Dataset):
     
     def __getitem__(self,idx):
         img_dir = self.img_dirs[idx]        
-        
+        class_name = img_dir.split('/')[-4]
         img = Image.open(img_dir).convert('RGB')     
         img = self.transform(img)
         img = img.type(torch.float32)
         label = self.labels[idx]
         
-        class_label = class_label_mapping[self.class_name]
+        class_label = class_label_mapping[class_name]
         
         if self.train_mode == 'test': # Test
             gt = self._get_ground_truth(img_dir,img)
