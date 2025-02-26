@@ -223,7 +223,7 @@ def fit(
         if cfg.CONTINUAL.continual:
             # Continual method 
             _logger.info('Continual Learning consolidate')
-            model.consolidate(trainloader)
+            # model.consolidate(trainloader)
             
             # Continual evaluation 
             num_start = 0 
