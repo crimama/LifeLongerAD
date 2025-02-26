@@ -115,7 +115,7 @@ def run(cfg):
         TRAINER = __import__(f'train.train_{cfg.MODEL.method.lower()}', fromlist=f'train_{cfg.MODEL.method.lower()}').fit
         
     else: 
-        from train import fit 
+        from train.train import fit 
         TRAINER = fit
     
     TRAINER(
