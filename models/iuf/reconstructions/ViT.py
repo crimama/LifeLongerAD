@@ -67,7 +67,7 @@ class ViTBlock(nn.Module):
         return x
 
 class ViT(nn.Module):
-    def __init__(self, inplanes=3, num_classes=12, hidden_dim=256, num_heads=4, mlp_dim=128):
+    def __init__(self, inplanes=3, num_classes=15, hidden_dim=256, num_heads=4, mlp_dim=128):
         super(ViT, self).__init__()
         self.patch_size = 1
         self.num_patches = inplanes * 14 * 14

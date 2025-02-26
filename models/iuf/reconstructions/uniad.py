@@ -47,7 +47,7 @@ class UniAD(nn.Module):
 
         self.upsample = nn.UpsamplingBilinear2d(scale_factor=instrides[0])
         
-        self.vitclassifiy=ViT(inplanes=3)
+        self.vitclassifiy=ViT(inplanes=3,num_classes=15) #! 추후 auto 수정 
 
         initialize_from_cfg(self, initializer)
     
