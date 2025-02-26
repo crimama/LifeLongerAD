@@ -5,8 +5,8 @@ DEFAULT:
 
 DATASET:
   datadir: ../Data
-  batch_size: 32
-  test_batch_size: 32
+  batch_size: 6
+  test_batch_size: 16
   num_workers: 0
   dataset_name: MVTecAD  # [AnomalyDataset,MVTecAD]
   aug_info: 
@@ -16,20 +16,21 @@ DATASET:
     anomaly_ratio: 0.0
     baseline: True
   class_names:
-    - grid
-    - carpet
-    - cable
-    - zipper
-    - wood
-    - tile
-    - metal_nut
-    - transistor
-    - bottle
-    - leather
-    - pill
-    - hazelnut
-    - toothbrush
-    - capsule
+    - 
+      - grid
+      - carpet
+      - cable
+      - zipper
+      - wood
+      - tile
+      - metal_nut
+      - transistor
+      - bottle
+      - leather
+      - pill
+      - hazelnut
+      - toothbrush
+      - capsule
     - screw
 
 OPTIMIZER:
@@ -47,8 +48,8 @@ TRAIN:
   log_interval: 10
   eval_interval: 1
   wandb:
-    use: false
-    project_name: LANGCAD
+    use: true
+    project_name: IUF
     
     
 CONTINUAL:

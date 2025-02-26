@@ -3,10 +3,10 @@ import os
 import random 
 import numpy as np 
 import pandas as pd 
-
+import omegaconf 
 import cv2 
 from PIL import Image 
-from typing import Literal
+from typing import Literal, Union  
 import torch 
 from torch.utils.data import Dataset
 
@@ -44,13 +44,17 @@ class MVTecAD(Dataset):
             gt           = True 
         )
     '''
-    def __init__(self, df: pd.DataFrame, class_name:str, train_mode:str, transform, gt_transform):
+    def __init__(self, df: pd.DataFrame, class_name:Union[str,list], train_mode:str, transform, gt_transform):
         '''
         train_mode = ['train','valid','test']
         '''
-        self.df = df 
+        
         self.class_name = class_name 
         
+        if type(class_name) == omegaconf.listconfig.ListConfig:
+            self.df = df[df[0].apply(lambda x : x.split('/')[-4]).apply(lambda x : x in class_name)]
+        else: 
+            self.df = df 
         
         # train / test split 
         self.img_dirs = self.df[self.df['train/test'] == train_mode][0].values # column 0 : img_dirs 

@@ -1,3 +1,4 @@
+import omegaconf
 import os
 import pandas as pd
 from glob import glob
@@ -5,6 +6,7 @@ from torchvision import datasets
 from .augmentation import train_augmentation, test_augmentation, gt_augmentation
 from .mvtecad import MVTecAD
 from .visa import VISA
+from typing import Union 
 
 def create_dataset(dataset_name: str, datadir: str, class_name: str, img_size: int, mean: list, std: list, aug_info: bool = None, **params):
     trainset, testset = eval(f"load_{dataset_name}")(
@@ -86,8 +88,9 @@ def get_visa_df(dataset_name: str, datadir: str, class_name: str, baseline: bool
     
     return visa_dirs
 
-def get_df(dataset_name: str, datadir: str, class_name: str, baseline: bool = True, anomaly_ratio: float = 0.0):
-    img_dirs = get_img_dirs(dataset_name, datadir, class_name)
+def get_df(dataset_name: str, datadir: str, class_name: Union[str,list], baseline: bool = True, anomaly_ratio: float = 0.0):
+    class_name = 'all' if type(class_name) == omegaconf.listconfig.ListConfig else class_name     
+    img_dirs = get_img_dirs(dataset_name, datadir, class_name) 
     img_dirs['train/test'] = img_dirs[0].apply(lambda x: x.split('/')[-3])
     
     if not baseline:
