@@ -8,7 +8,7 @@ from statistics import mean
 import torch 
 
 def compute_continual_result(result: pd.DataFrame, 
-                              metric_list: list = ['img_level_auroc','img_level_auroc','img_level_average_precision','pix_level_average_precision'],
+                              metric_list: list = ['img_level_auroc','pix_level_auroc','img_level_average_precision','pix_level_average_precision'],
                               continual: bool = True) -> tuple:
     """
     주어진 결과 DataFrame에서 최종 결과(main_result)와 잊어버림(forgetting) 지표를 계산합니다.
@@ -39,7 +39,7 @@ def compute_continual_result(result: pd.DataFrame,
     
         # === Forgetting, BWT, FWT 계산 ===
         
-        forgetting_result = pd.DataFrame()        
+        forgetting_result = pd.DataFrame()
         # 첫 클래스는 제외 (예: 첫 클래스는 기준이므로)
         for cln in class_name_list[1:]:
             # 현재 클래스에 해당하는 데이터 추출 (불필요한 열 제거)
@@ -70,8 +70,8 @@ def compute_continual_result(result: pd.DataFrame,
             # eval 대신 직접 인덱싱하여 값을 추출합니다.
             data = {
                 'AF': [AF[m] for m in metric_list],
-                'BWT': [BWT[m] for m in metric_list],
-                'FWT': [FWT[m] for m in metric_list]
+                'BWT': [BWT[m].to_list() for m in metric_list],
+                'FWT': [FWT[m].to_list() for m in metric_list]
             }
             df_metrics = pd.DataFrame(data, index=metric_list).reset_index().rename(columns={'index': 'metric'})
             df_metrics['class_name'] = cln
