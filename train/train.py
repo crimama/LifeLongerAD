@@ -66,13 +66,17 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
         data_time_m.update(time.time() - end)
         
         outputs = model(images) 
-        loss = model.criterion(outputs)
+
+        # save grad for drift monitoring 
+        outputs[1][1].retain_grad() # for reverse distillation         
+        
+        loss = model.criterion(outputs)        
         optimizer.zero_grad()
         accelerator.backward(loss)
         
         losses_m.update(loss.item())
-        #! collect_gradients(cfg, model, all_gradients, epoch, step)
-        drift_monitor.update(outputs[1][1]) # RD의 경우 decoder feature를 추출하기 위해 outputs[1][1] 사용 
+        #* collect_gradients(cfg, model, all_gradients, epoch, step)
+        drift_monitor.update(outputs[1][1].grad) # RD의 경우 decoder feature를 추출하기 위해 outputs[1][1] 사용         
         optimizer.step()
         
         batch_time_m.update(time.time() - end)
@@ -179,7 +183,7 @@ def fit(
                 
                 epoch_time_m.update(time.time() - end)
                 end = time.time()
-                    
+        
         
         # EVALUATION
         num_current_class = list(loader_dict.keys()).index(current_class_name)
@@ -187,16 +191,16 @@ def fit(
         # model save
         os.makedirs(f"{savedir}/model_weight/", exist_ok=True)
         torch.save(model.state_dict(),f"{savedir}/model_weight/{current_class_name}_model.pth")
-    
+
         if cfg.CONTINUAL.continual:
             # Continual method 
-            _logger.info('Continual Learning consolidate')
+            # _logger.info('Continual Learning consolidate')
             # model.consolidate(trainloader)
             
             # Continual evaluation 
             num_start = 0 
-            num_end = num_current_class+2 if num_current_class != len(loader_dict) else len(loader_dict)
-            
+            num_end = num_current_class+2 if num_current_class != len(loader_dict)-1 else len(loader_dict)
+
             for n_task in range(num_start,num_end):
                 class_name, class_loader_dict = list(loader_dict.items())[n_task]
                 trainloader, testloader = loader_dict[class_name]['train'],loader_dict[class_name]['test']
