@@ -18,7 +18,7 @@ warnings.filterwarnings('ignore')
 _logger = logging.getLogger('train')
     
 
-def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_interval: int, epoch, epochs, savedir, cfg, drift_monitor) -> dict:
+def train(model, dataloader, featureloader, testloader, optimizer, scheduler, accelerator, log_interval: int, epoch, epochs, savedir, cfg, drift_monitor) -> dict:
     
     def collect_gradients(cfg, model, all_gradients, epoch, step):
         if ((cfg.CONTINUAL.online and (step % 10 == 0)) or (not cfg.CONTINUAL.online and ((epoch) % 2 == 0) and (step % 4 == 0))):
@@ -28,7 +28,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
                     step_grad_dict[name] = param.grad.clone().detach().cpu().numpy()
             all_gradients.append(step_grad_dict)
     
-    def log_training_info(step, accelerator, dataloader, epoch, epochs, losses_m, optimizer, batch_time_m, data_time_m, images):
+    def log_training_info(step, accelerator, dataloader, epoch, epochs, losses_m, optimizer, batch_time_m, data_time_m, feats):
         _logger.info(
             'Train Epoch [{epoch}/{epochs}] " [{:d}/{}] Total Loss: {loss.avg:>6.4f} '
             'LR: {lr:.3e} '
@@ -38,17 +38,18 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
                 len(dataloader) // accelerator.gradient_accumulation_steps,
                 epoch=epoch, epochs=epochs, loss=losses_m,
                 lr=optimizer.param_groups[0]['lr'], batch_time=batch_time_m,
-                rate_avg=images[0].size(0) / batch_time_m.avg, data_time=data_time_m
+                rate_avg=feats.size(0) / batch_time_m.avg, data_time=data_time_m
             )
         )
     
-    def do_online_inference(cfg, step, dataloader, model, accelerator, savedir, epoch, testloader, current_class_name, batch_time_m, optimizer):
-        if ((cfg.CONTINUAL.online and (step % 10 == 0)) or (step == len(dataloader) - 1)):
+    def do_online_inference(cfg, featureloader, model, accelerator, savedir, epoch, testloader, current_class_name, batch_time_m, optimizer):
+        if (epoch==3):
             test_metrics = test(
-                model=model, device=accelerator.device, savedir=savedir, use_wandb=False,
-                epoch=step if cfg.CONTINUAL.online else step*epoch, optimizer=optimizer,
+                model=model, featureloader=featureloader, testloader=testloader, device=accelerator.device, 
+                savedir=savedir, use_wandb=False,
+                epoch=epoch, optimizer=optimizer,
                 epoch_time_m=batch_time_m, class_name=current_class_name,
-                current_class_name=current_class_name, dataloader=testloader
+                current_class_name=current_class_name
             )
     
     def save_gradients_if_needed(cfg, dataloader, epoch, savedir, all_gradients):
@@ -62,30 +63,31 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
     
     model.train()
     all_gradients = []
-    for step, (images, _, _) in enumerate(dataloader):
+    for step, (feat, target) in enumerate(featureloader):
         data_time_m.update(time.time() - end)
         
-        outputs = model(images) 
-
-        # save grad for drift monitoring 
-        outputs[1][1].retain_grad() # for reverse distillation         
+        if cfg.DATASET.embed_augemtation:
+            feat = feat + torch.randn(feat.shape).to(feat.device)        
         
-        loss = model.criterion(outputs)        
+        # predict
+        outputs = model(feat.to(accelerator.device)) # outputs = [z,w]
+        loss   = model.criterion([outputs, target])
+        outputs.retain_grad() # for reverse distillation         
+        
         optimizer.zero_grad()
         accelerator.backward(loss)
-        model.on_before_optimizer_step(optimizer)
         
         losses_m.update(loss.item())
         #* collect_gradients(cfg, model, all_gradients, epoch, step)
-        drift_monitor.update(outputs[1][1]) # RD의 경우 decoder feature를 추출하기 위해 outputs[1][1] 사용         
+        drift_monitor.update(outputs) # RD의 경우 decoder feature를 추출하기 위해 outputs[1][1] 사용         
         optimizer.step()
         
         batch_time_m.update(time.time() - end)
         
-        adjusted_log_interval = log_interval if cfg.CONTINUAL.online else 1
+        adjusted_log_interval = log_interval if cfg.CONTINUAL.online else 10
         if (step + 1) % adjusted_log_interval == 0:
-            log_training_info(step, accelerator, dataloader, epoch, epochs, losses_m, optimizer, batch_time_m, data_time_m, images)
-        do_online_inference(cfg, step, dataloader, model, accelerator, savedir, epoch, testloader, current_class_name, batch_time_m, optimizer)
+            log_training_info(step, accelerator, featureloader, epoch, epochs, losses_m, optimizer, batch_time_m, data_time_m, feat)
+        # do_online_inference(cfg, featureloader, model, accelerator, savedir, epoch, testloader, current_class_name, batch_time_m, optimizer)
         end = time.time()
     
     #! save_gradients_if_needed(cfg, dataloader, epoch, savedir, all_gradients)    
@@ -93,7 +95,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
 
 
 
-def test(model, dataloader, device, 
+def test(model, featureloader, testloader, device,
          savedir, use_wandb, epoch, optimizer, epoch_time_m, class_name, current_class_name,
          last : bool = False) -> dict:
     from utils.metrics import MetricCalculator, loco_auroc    
@@ -101,17 +103,54 @@ def test(model, dataloader, device,
     img_level = MetricCalculator(metric_list = ['auroc','average_precision'])
     pix_level = MetricCalculator(metric_list = ['auroc','average_precision'])     
 
-    #! Inference     
-    for idx, (images, labels, _, gts) in enumerate(dataloader):
-
+    target_oriented_train_feat = [] 
+    for feat, target in featureloader:
+        feat = feat.to(device)
         with torch.no_grad():
-            outputs = model(images)   
-            score_map = model.get_score_map(outputs).detach().cpu()
-            score = score_map.reshape(score_map.shape[0],-1).max(-1)[0]
+            z = model.embedding_layer(feat)
+            target_oriented_train_feat.append(z.detach().cpu().numpy())            
+    target_oriented_train_feat = np.vstack(target_oriented_train_feat)
+    
+    sample_features, _ = model.core.featuresampler.run(target_oriented_train_feat)
+    model.core.anomaly_scorer.fit(detection_features=[sample_features])
+
+    #! Inference     
+    for step, (images, labels, cls, gts) in enumerate(testloader):
+
+        _ = model.core.forward_modules.eval()
+
+        batchsize = images.shape[0]
+        with torch.no_grad():
+            # create features of test images 
+            features, patch_shapes = model.core._embed(images.to(device), provide_patch_shapes=True)
+            features = torch.Tensor(np.vstack(features)).to(device)        
+            features = model.embedding_layer(features)
+            
+            # predict anomaly score 
+            image_scores, _, _ = model.core.anomaly_scorer.predict([features.detach().cpu().numpy()])            
+            
+            # get patch wise anomaly score using image score    
+            patch_scores = model.core.patch_maker.unpatch_scores(
+                image_scores, batchsize=batchsize 
+            ) # Unfold : (B)
+                        
+            scales = patch_shapes[0]
+            patch_scores = patch_scores.reshape(batchsize, scales[0], scales[1])
+            masks = model.core.anomaly_segmentor.convert_to_segmentation(patch_scores) # interpolation : (B,pw,ph) -> (B,W,H)
+                        
+            score_map = np.concatenate([np.expand_dims(sm,0) for sm in masks])
+            score_map = np.expand_dims(score_map,1)
+            
+            # get image wise anomaly score 
+            image_scores = model.core.patch_maker.unpatch_scores(
+                image_scores, batchsize=batchsize
+            )
+            image_scores = image_scores.reshape(*image_scores.shape[:2], -1)
+            image_scores = model.core.patch_maker.score(image_scores)
                 
         # Stack Scoring for metrics 
         pix_level.update(score_map,gts.type(torch.int))
-        img_level.update(score, labels.type(torch.int))
+        img_level.update(image_scores, labels.type(torch.int))
             
     i_results, p_results = img_level.compute(), pix_level.compute()
     _logger.info(f"Current Class name : {current_class_name} Class name : {class_name} Image AUROC: {i_results['auroc']:.3f}| Pixel AUROC: {p_results['auroc']:.3f}")
@@ -141,16 +180,45 @@ def fit(
     
     #drift monitor 
     
+    def generate_proxy_and_labels(model, trainloader, accelerator, cfg):
+        featureloader = accelerator.prepare(model.get_feature_loader(trainloader))
+        features = []
+        for feat, _ in featureloader:
+            features.append(feat.detach().cpu().numpy())
+        features = np.vstack(features)
+
+        model.core.featuresampler.percentage = cfg.MODEL.params.pslabel_sampling_ratio
+        proxy, _ = model.core.featuresampler.run(features)
+        model.core.featuresampler.percentage = cfg.MODEL.params.sampling_ratio
+
+        proxy = nn.functional.normalize(torch.Tensor(proxy), dim=1)
+        proxy_label = []
+        for feat, _ in featureloader:
+            proxy_label.append(torch.matmul(feat, proxy.T.to(feat.device)).argmax(dim=1))
+        proxy_label = torch.concat(proxy_label)
+        
+        featureloader.dataset.labels = proxy_label
+        model.set_criterion(proxy)
+
+        return featureloader
     
     for n_task, (current_class_name, class_loader_dict) in enumerate(loader_dict.items()):
         if (n_task == 0) or (cfg.CONTINUAL.continual==False):
             drift_monitor = DriftMonitor(log_dir=os.path.join(savedir,'DriftMonitor.log'))
         
+        class_name, class_loader_dict = list(loader_dict.items())[n_task]
+        trainloader, testloader = loader_dict[class_name]['train'],loader_dict[class_name]['test']
+        
+        featureloader = generate_proxy_and_labels(model, trainloader, accelerator,cfg)
+        
+        
         torch.cuda.empty_cache()
         _logger.info(f"Current Class Name : {current_class_name}")        
             
         # Init optimzier & SCheduler 
-        optimizer = __import__('torch.optim',fromlist='optim').__dict__[cfg.OPTIMIZER.opt_name](model.parameters(), lr=cfg.OPTIMIZER.lr, **cfg.OPTIMIZER.params)        
+        from adamp import AdamP 
+        optimizer = AdamP(model.parameters(), lr=cfg.OPTIMIZER.lr, **cfg.OPTIMIZER.params)
+        
         if cfg.SCHEDULER.name is not None:            
             
             scheduler = __import__('torch.optim.lr_scheduler', fromlist='lr_scheduler').__dict__[cfg.SCHEDULER.name](optimizer, **cfg.SCHEDULER.params)
@@ -160,30 +228,46 @@ def fit(
         # Init Dataloader 
         trainloader, testloader = loader_dict[current_class_name]['train'],loader_dict[current_class_name]['test']
         
-        model, trainloader, testloader, optimizer, scheduler = accelerator.prepare(model, trainloader, testloader, optimizer, scheduler)
+        model, featureloader, trainloader, testloader, optimizer, scheduler = accelerator.prepare(model, featureloader, trainloader, testloader, optimizer, scheduler)
         
         # Train 
         for epoch in range(epochs):
             # train one epoch 
             train(
-                    model        = model, 
-                    dataloader   = trainloader, 
-                    testloader   = testloader, 
-                    optimizer    = optimizer, 
-                    scheduler    = scheduler,
-                    accelerator  = accelerator, 
-                    log_interval = log_interval,
-                    epoch        = epoch,
-                    epochs       = epochs,
-                    savedir      = savedir, 
-                    cfg          = cfg,
-                    drift_monitor= drift_monitor 
+                    model           = model, 
+                    dataloader      = trainloader, 
+                    featureloader   = featureloader, 
+                    testloader      = testloader, 
+                    optimizer       = optimizer, 
+                    scheduler       = scheduler,
+                    accelerator     = accelerator, 
+                    log_interval    = log_interval,
+                    epoch           = epoch,
+                    epochs          = epochs,
+                    savedir         = savedir, 
+                    cfg             = cfg,
+                    drift_monitor   = drift_monitor 
                 )            
             if scheduler:
                 scheduler.step()
                 
                 epoch_time_m.update(time.time() - end)
                 end = time.time()
+                
+            if (epoch%20 == 0) or (epoch%199 == 0): 
+                test_metrics = test(
+                    model              = model, 
+                    featureloader      = featureloader, 
+                    testloader         = testloader, 
+                    device             = accelerator.device, 
+                    savedir            = savedir, 
+                    use_wandb          = False,
+                    epoch              = epoch, 
+                    optimizer          = optimizer,
+                    epoch_time_m       = epoch_time_m, 
+                    class_name         = current_class_name,
+                    current_class_name = current_class_name
+                )
 
         
         # EVALUATION
@@ -194,9 +278,6 @@ def fit(
         torch.save(model.state_dict(),f"{savedir}/model_weight/{current_class_name}_model.pth")
 
         if cfg.CONTINUAL.continual:
-            # Continual method 
-            # _logger.info('Continual Learning consolidate')
-            # model.consolidate(trainloader)
             
             # Continual evaluation 
             num_start = 0 
@@ -209,6 +290,7 @@ def fit(
                 
                 test_metrics = test(
                                 model              = model, 
+                                featureloader      = featureloader,
                                 device             = accelerator.device,
                                 savedir            = savedir, 
                                 use_wandb          = use_wandb,
@@ -217,7 +299,7 @@ def fit(
                                 epoch_time_m       = epoch_time_m,
                                 class_name         = trainloader.dataset.class_name,
                                 current_class_name = current_class_name,
-                                dataloader         = testloader,
+                                testloader         = testloader,
                                 last               = True
                             )
         else:

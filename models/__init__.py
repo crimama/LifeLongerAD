@@ -3,3 +3,7 @@ from .fastflow import FastFlow
 from .reversedistillation import ReverseDistillation
 from .cae import ConvAutoencoder
 from .iuf import IUF
+from .cfir import CFIR
+from .continual_rd import ContinualReverseDistillation
+from .softpatch.softpatch import PatchCore
+from .proxycore import ProxyCore

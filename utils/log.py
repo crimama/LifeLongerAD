@@ -66,7 +66,7 @@ class DriftMonitor:
         """
         latent = features.detach().cpu().numpy()
         norm_value = np.linalg.norm(latent.reshape(latent.shape[0], -1), axis=1)
-
+        
         for norm in norm_value:
             self.adwin.update(norm)
             current_mean = self.adwin.estimation
@@ -85,7 +85,7 @@ class DriftMonitor:
             self.step += 1
 
             # 로그 기록 (터미널 출력 없이 파일에만 기록됨)
-            self.logger.info(f"Step {self.step}: current_mean={current_mean:.4f}, width={current_width}, magnitude={drift_magnitude:.4f}")
+            self.logger.info(f"Step {self.step}: current={norm:.32f}, width={current_width}, magnitude={drift_magnitude:.4f}")
 
 class FormatterNoInfo(logging.Formatter):
     def __init__(self, fmt='%(levelname)s: %(message)s'):

@@ -7,9 +7,12 @@ gpu_id=$1
 
 # GPU ID에 따라 method_setting 설정
 if [ "$gpu_id" -eq 0 ]; then
-    method_setting="cae"
+    method_setting="proxycore"
+    continual='false'
+    gpu_id=0
 elif [ "$gpu_id" -eq 1 ]; then
-    method_setting="cae"
+    method_setting="rd"
+    continual='true'
     gpu_id=0
 else
     echo "Invalid GPU ID. Please use 0 or 1."
@@ -17,7 +20,7 @@ else
 fi
 
 dataset='mvtecad'
-continual='true false'
+
 
 for c in $continual
 do
@@ -27,7 +30,7 @@ do
         online_options="false"
     else
         continual_method="EMPTY"
-        online_options="true false"
+        online_options="false"
     fi
 
     for cm in $continual_method
@@ -41,7 +44,7 @@ do
                     CUDA_VISIBLE_DEVICES=$gpu_id python main.py \
                         default_setting=./configs/default/$d.yaml \
                         model_setting=./configs/model/$m.yaml \
-                        DEFAULT.exp_name=baseline_$cm \
+                        DEFAULT.exp_name=Nsoftmax-focal_loss \
                         CONTINUAL.continual=$c \
                         CONTINUAL.online=$o \
                         CONTINUAL.method.name=$cm
