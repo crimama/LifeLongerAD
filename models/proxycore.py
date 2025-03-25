@@ -10,6 +10,8 @@ from models import PatchCore
 import math 
 import torch.nn as nn 
 
+from .criteria import ArcMarginProduct
+
 class MLP(nn.Module):
     def __init__(self, input_size: int, hidden_size: int, output_size: int):
         super(MLP,self).__init__()
@@ -166,7 +168,39 @@ class ProxyNCA(torch.nn.Module):
             return loss.mean()
         else:
             return loss
-    
+        
+class SoftTriple(nn.Module):
+    def __init__(self, init_core:np.ndarray, la=20, gamma=0.1, tau=0.2, margin=0.01, dim=1024, K=3):
+        super(SoftTriple, self).__init__()
+        self.la = la
+        self.gamma = 1./gamma
+        self.tau = tau
+        self.margin = margin
+        self.cN = init_core.shape[0]
+        self.K = K
+        self.fc = nn.Parameter(torch.Tensor(init_core).repeat(K,1).T)
+        self.weight = torch.zeros(self.cN*K, self.cN*K, dtype=torch.bool).cuda()
+        for i in range(0, self.cN):
+            for j in range(0, K):
+                self.weight[i*K+j, i*K+j+1:(i+1)*K] = 1
+
+    def forward(self, input, target):
+        device = input.device
+        centers = F.normalize(self.fc, p=2, dim=0).to(device)
+        simInd = input.matmul(centers)
+        simStruc = simInd.reshape(-1, self.cN, self.K)
+        prob = F.softmax(simStruc*self.gamma, dim=2)
+        simClass = torch.sum(prob*simStruc, dim=2)
+        marginM = torch.zeros(simClass.shape).to(device)
+        marginM[torch.arange(0, marginM.shape[0]), target] = self.margin
+        lossClassify = F.cross_entropy(self.la*(simClass-marginM), target.to(device))
+        # if self.tau > 0 and self.K > 1:
+            # simCenter = centers.t().matmul(centers)
+            # reg = torch.sum(torch.sqrt(2.0+1e-5-2.*simCenter[self.weight]))/(self.cN*self.K*(self.K-1.))
+            # return lossClassify+self.tau*reg
+        # else:
+        return lossClassify    
+
 
 class ProxyCore(nn.Module):
     '''
@@ -213,6 +247,15 @@ class ProxyCore(nn.Module):
             )
         elif self.proxy == 'ProxyAnchor':
             self._criterion = ProxyAnchor(
+                init_core = init_core
+            )
+            
+        elif self.proxy == 'Softtriple':
+            self._criterion = SoftTriple(
+                init_core = init_core
+            )
+        elif self.proxy == 'ArcMarginProduct':
+            self._criterion = ArcMarginProduct(
                 init_core = init_core
             )
                     
