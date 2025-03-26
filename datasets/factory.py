@@ -154,3 +154,27 @@ def train_test_split(df, max_ratio=0.2, anomaly_ratio=0.2):
     final_df = pd.concat([fix_train, fix_test]).reset_index(drop=True)
     
     return final_df
+
+
+def get_mpdd_df(datadir: str, dataset_name: str, class_name: str, baseline: bool = True, anomaly_ratio: float = 0.0):
+    '''
+    args:
+        datadir : root of data 
+        class_name : the name of category 
+        baseline : dataset for reproduce performance of baseline if True or dataset for experiment of fully unsupervised 
+    Example:
+        df = get_btad_df(
+                ddataset_name = 'BTAD'
+                datadir       = './Data' , 
+                class_name    = 'toothbrush'
+            ) 
+    '''
+    # get img_dirs dataframe 
+    
+    img_dirs = pd.Series(sorted(glob(os.path.join(datadir,dataset_name,str(class_name),'*','*','*'))))
+    img_dirs = pd.DataFrame(img_dirs[img_dirs.apply(lambda x : x.split('/')[-3]) != 'ground_truth']).reset_index(drop=True)
+    img_dirs['train/test'] = img_dirs[0].apply(lambda x : x.split('/')[-3]) # allocate initial train/test label 
+    img_dirs['anomaly'] = img_dirs[0].apply(lambda x : 1 if x.split('/')[-2] != 'good' else 0)
+    if baseline:
+        df = img_dirs
+    return df 
