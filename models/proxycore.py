@@ -170,7 +170,7 @@ class ProxyNCA(torch.nn.Module):
             return loss
         
 class SoftTriple(nn.Module):
-    def __init__(self, init_core:np.ndarray, la=20, gamma=0.1, tau=0.2, margin=0.01, dim=1024, K=3):
+    def __init__(self, init_core:np.ndarray, la=20, gamma=0.1, tau=0.2, margin=0.01, dim=1024, K=4):
         super(SoftTriple, self).__init__()
         self.la = la
         self.gamma = 1./gamma
@@ -194,12 +194,12 @@ class SoftTriple(nn.Module):
         marginM = torch.zeros(simClass.shape).to(device)
         marginM[torch.arange(0, marginM.shape[0]), target] = self.margin
         lossClassify = F.cross_entropy(self.la*(simClass-marginM), target.to(device))
-        # if self.tau > 0 and self.K > 1:
-            # simCenter = centers.t().matmul(centers)
-            # reg = torch.sum(torch.sqrt(2.0+1e-5-2.*simCenter[self.weight]))/(self.cN*self.K*(self.K-1.))
-            # return lossClassify+self.tau*reg
-        # else:
-        return lossClassify    
+        if self.tau > 0 and self.K > 1:
+            simCenter = centers.t().matmul(centers)
+            reg = torch.sum(torch.sqrt(2.0+1e-5-2.*simCenter[self.weight]))/(self.cN*self.K*(self.K-1.))
+            return lossClassify+self.tau*reg
+        else:
+            return lossClassify    
 
 
 class ProxyCore(nn.Module):
@@ -250,7 +250,7 @@ class ProxyCore(nn.Module):
                 init_core = init_core
             )
             
-        elif self.proxy == 'Softtriple':
+        elif self.proxy == 'SoftTriple':
             self._criterion = SoftTriple(
                 init_core = init_core
             )
