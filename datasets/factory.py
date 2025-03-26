@@ -21,6 +21,33 @@ def create_dataset(dataset_name: str, datadir: str, class_name: str, img_size: i
                                                 )
     return trainset, testset
 
+def load_MPDD(dataset_name:str, datadir:str, class_name:str, img_size:int, mean:list, std:list, aug_info = None, baseline: bool = False, anomaly_ratio: float = 0.0):
+    df = get_mpdd_df(
+            datadir       = datadir,
+            dataset_name  = dataset_name,
+            class_name    = class_name,
+            baseline      = baseline,
+            anomaly_ratio = anomaly_ratio
+        )
+
+    trainset = MPDD(
+                df           = df,
+                class_name   = class_name,
+                train_mode   = 'train',
+                transform    = train_augmentation(img_size = img_size, mean = mean, std = std, aug_info = aug_info),
+                gt_transform = gt_augmentation(img_size = img_size, aug_info = aug_info)
+            )
+
+    testset = MPDD(
+                df           = df,
+                class_name   = class_name,
+                train_mode   = 'test',
+                transform    = test_augmentation(img_size = img_size, mean = mean, std = std, aug_info = aug_info),
+                gt_transform = gt_augmentation(img_size = img_size, aug_info = aug_info)
+            )
+    
+    return trainset, testset 
+
 def load_VISA(dataset_name:str, datadir:str, class_name:str, img_size:int, mean:list, std:list, aug_info = None, baseline: bool = False, anomaly_ratio: float = 0.0):
     df = get_visa_df(
             dataset_name  = dataset_name,
@@ -32,18 +59,18 @@ def load_VISA(dataset_name:str, datadir:str, class_name:str, img_size:int, mean:
 
     trainset = VISA(
                 df           = df,
+                class_name   = class_name,
                 train_mode   = 'train',
                 transform    = train_augmentation(img_size = img_size, mean = mean, std = std, aug_info = aug_info),
-                gt_transform = gt_augmentation(img_size = img_size, aug_info = aug_info),
-                gt           = True 
+                gt_transform = gt_augmentation(img_size = img_size, aug_info = aug_info)
             )
 
     testset = VISA(
                 df           = df,
+                class_name   = class_name,
                 train_mode   = 'test',
                 transform    = test_augmentation(img_size = img_size, mean = mean, std = std, aug_info = aug_info),
-                gt_transform = gt_augmentation(img_size = img_size, aug_info = aug_info),
-                gt           = True 
+                gt_transform = gt_augmentation(img_size = img_size, aug_info = aug_info)
             )
     
     return trainset, testset 

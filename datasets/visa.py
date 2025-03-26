@@ -9,13 +9,31 @@ from PIL import Image
 
 import torch 
 from torch.utils.data import Dataset
+from typing import Literal, Union  
+
+
+class_label_mapping = {
+    'macaroni1' : 0,
+    'pcb1' : 1,
+    'candle' : 2,
+    'capsules' : 3,
+    'pcb2' : 4,
+    'cashew' : 5,
+    'chewinggum' :6, 
+    'fryum' : 7,
+    'pcb3' : 8,
+    'macaroni2' : 9,
+    'pcb4' : 10,
+    'pipe_fryum' : 11
+    
+}
 
 class VISA(Dataset):
     '''
     Example 
         df = get_df(
             datadir       = datadir ,
-            class_name    = class_name,
+            class_name    = class_name,T
             anomaly_ratio = anomaly_ratio
         )
         trainset = MVTecAD(
@@ -26,13 +44,14 @@ class VISA(Dataset):
             gt           = True 
         )
     '''
-    def __init__(self, df: pd.DataFrame, class_name:str, caption_dict:dict, train_mode:str, transform, gt_transform, 
-                 num_neg_sample=1, gt=True, idx=False, text_method='easy'):
+    def __init__(self, df: pd.DataFrame, class_name:Union[str,list], train_mode:str, transform, gt_transform,  idx=False):
         '''
         train_mode = ['train','valid','test']
         '''
         self.df = df 
         self.train_mode = train_mode
+        
+        self.class_name = class_name 
         
         # train / test split 
         self.img_dirs = self.df[self.df['train/test'] == train_mode][0].values # column 0 : img_dirs 
@@ -40,52 +59,24 @@ class VISA(Dataset):
         self.masks = self.df[self.df['train/test'] == train_mode]['mask'].values 
         
         # ground truth 
-        self.gt = gt # mode 
+        self.train_mode = train_mode 
         self.gt_transform = gt_transform 
 
         # Image 
         self.transform = transform         
         self.name = 'VISA'        
-        self.class_name = class_name
         self.idx = idx 
-        
-        # Text 
-        self.text_method = text_method
-        self.caption_dict = caption_dict
-        self.text_format = ["a photo of {}", "a picture of {}", "a image of {}"]
-        self.positive, self.negative = self.caption_split(caption_dict, class_name)        
-        self.task_order = list(caption_dict.keys()).index(class_name)
-        self.neg_classes = list(self.caption_dict.keys())[:self.task_order]
-        
-    def caption_split(self, caption_dict, class_name):
-        '''z
-            Output 
-                positive : dict 
-                negative : list 
-        '''
-        task_order = list(caption_dict.keys()).index(class_name)
-        self.task_order = task_order 
-        negative = [] 
-        self.negative_class = [] 
-        for cn in list(caption_dict.keys())[:task_order]:
-            caption = caption_dict[cn].values()
-            negative.extend(caption)
-            self.negative_class.append(cn)
-        positive = caption_dict[class_name]
-        return positive, negative 
-    
-    def get_easy_text(self, class_name):
-        txt_formula = ['A photo of {}', 'A picture of {}', 'A image of {}']
-        text = random.sample(txt_formula,1)[0].format(class_name)
-        return text
         
     def _get_ground_truth(self,img_dir, img, idx):
         if self.labels[idx] == 1:
             img_dir = self.masks[idx]
             gt = Image.open(img_dir)
             gt = self.gt_transform(gt)
-        else:            
+        else:
+            # image = np.zeros_like(torch.permute(img,dims=(1,2,0))).astype(np.uint8)
             gt = torch.zeros([1, *img.size()[1:]])
+        # gt = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
         return gt
         
     def __len__(self):
@@ -93,30 +84,20 @@ class VISA(Dataset):
     
     def __getitem__(self,idx):
         img_dir = self.img_dirs[idx]
+        # img = cv2.imread(img_dir)
         img = Image.open(img_dir).convert('RGB')     
         img = self.transform(img)
         img = img.type(torch.float32)
         label = self.labels[idx]
         
-        if self.train_mode == 'test': # Test
-            gt = self._get_ground_truth(img_dir,img, idx)
-            gt = (gt > 0).float()            
-            
-            return img, label, gt
+        class_label = class_label_mapping[self.class_name]
         
-        else: # Train 
-            data_id = img_dir.split('/')[-1].strip('.png')
-            
-            # Positive Text 
-            if self.text_method == 'pre-gen':
-                positive_text = self.positive[data_id]
-            else:
-                positive_text = np.random.choice(self.text_format).format(self.class_name)
-            
-            # Negative Text 
-            if self.task_order == 0 or self.text_method == 'easy':
-                negative_text = np.random.choice(self.text_format).format(self.class_name)
-            else:
-                negative_text = random.sample(self.negative,self.num_neg_sample)[0]
-                
-            return img, positive_text, negative_text
+        if self.train_mode == 'test': # Test   
+            gt = self._get_ground_truth(img_dir, img, idx)
+            gt = (gt > 0).float()            
+        
+            return img, label, class_label, gt
+        
+        else:
+            return img, label, class_label 
+        
