@@ -136,6 +136,7 @@ class PatchCore(torch.nn.Module):
             return features
 
         _ = self.forward_modules["feature_aggregator"].eval()
+
         with torch.no_grad():
             features = self.forward_modules["feature_aggregator"](images)
 
@@ -201,7 +202,7 @@ class PatchCore(torch.nn.Module):
             for image in data_iterator:
                 if isinstance(image, dict):
                     image = image["image"]
-                features.append(_image_to_features(image))
+                features.append(_image_to_features(image.unsqueeze(0)))
 
         features = np.concatenate(features, axis=0)
         

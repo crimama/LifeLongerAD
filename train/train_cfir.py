@@ -28,35 +28,19 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
                     step_grad_dict[name] = param.grad.clone().detach().cpu().numpy()
             all_gradients.append(step_grad_dict)
     
-    def log_training_info(step, accelerator, dataloader, epoch, epochs,
-                      losses_m, feature_losses_m, class_losses_m, svd_losses_m,
-                      optimizer, batch_time_m, data_time_m, images):
-        current_step = (step + 1) // accelerator.gradient_accumulation_steps
-        total_steps = len(dataloader) // accelerator.gradient_accumulation_steps
+    def log_training_info(step, accelerator, dataloader, epoch, epochs, losses_m, optimizer, batch_time_m, data_time_m, images):
         _logger.info(
-            'Train Epoch [{epoch}/{epochs}] [{current_step:d}/{total_steps:d}] '
-            'Total Loss: {loss_val:>6.4f} | '
-            'Feature Loss: {feature_loss_val:>6.4f} | '
-            'Class Loss: {class_loss_val:>6.4f} | '
-            'SVD Loss: {svd_loss_val:>6.4f} | '
-            'LR: {lr:.3e} | '
-            'Time: {batch_time_avg:.3f}s, {rate_avg:>3.2f}/s | '
-            'Data: {data_time_avg:.3f}s'.format(
-                current_step=current_step,
-                total_steps=total_steps,
-                epoch=epoch,
-                epochs=epochs,
-                loss_val=losses_m.val,
-                feature_loss_val=feature_losses_m.val,
-                class_loss_val=class_losses_m.val,
-                svd_loss_val=svd_losses_m.val,
-                lr=optimizer.param_groups[0]['lr'],
-                batch_time_avg=batch_time_m.avg,
-                rate_avg=images[0].size(0) / batch_time_m.avg,
-                data_time_avg=data_time_m.avg
+            'Train Epoch [{epoch}/{epochs}] " [{:d}/{}] Total Loss: {loss.avg:>6.4f} '
+            'LR: {lr:.3e} '
+            'Time: {batch_time.avg:.3f}s, {rate_avg:>3.2f}/s '
+            'Data: {data_time.avg:.3f}s'.format(
+                (step + 1) // accelerator.gradient_accumulation_steps,
+                len(dataloader) // accelerator.gradient_accumulation_steps,
+                epoch=epoch, epochs=epochs, loss=losses_m,
+                lr=optimizer.param_groups[0]['lr'], batch_time=batch_time_m,
+                rate_avg=images[0].size(0) / batch_time_m.avg, data_time=data_time_m
             )
         )
-
     
     def do_online_inference(cfg, step, dataloader, model, accelerator, savedir, epoch, testloader, current_class_name, batch_time_m, optimizer):
         if ((cfg.CONTINUAL.online and (step % 10 == 0)) or (step == len(dataloader) - 1)):
@@ -72,53 +56,41 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
             current_class_name_ = dataloader.dataset.class_name
             np.save(f"{savedir}/gradients/{current_class_name_}_gradient_log_epoch_{epoch}.npy", all_gradients)
     
-    batch_time_m = AverageMeter()
-    data_time_m = AverageMeter()
-    
-    losses_m = AverageMeter()
-    feature_losses_m = AverageMeter()
-    class_losses_m = AverageMeter()
-    svd_losses_m = AverageMeter()
-    
+    batch_time_m = AverageMeter(); data_time_m = AverageMeter(); losses_m = AverageMeter()
     current_class_name = dataloader.dataset.class_name
+    end = time.time()
+    
     model.train()
     all_gradients = []
-    
-    end = time.time()
-    for step, (images, labels, class_labels) in enumerate(dataloader):
-        Input = {'image':images,'clslabel':class_labels}
+    for step, (images, _, _) in enumerate(dataloader):
         data_time_m.update(time.time() - end)
         
-        # Training 
-        outputs = model(Input) 
-        loss = model.criterion(outputs, Input)
+        outputs = model(images) 
+
+        # save grad for drift monitoring 
+        # outputs[1][1].retain_grad() # for reverse distillation         
+        
+        loss = model.criterion(outputs)        
         optimizer.zero_grad()
-        accelerator.backward(loss['loss'])         
+        accelerator.backward(loss)
         
-        # Loss record  
-        losses_m.update(loss['loss'].item())
-        feature_losses_m.update(loss['feature_loss'])
-        class_losses_m.update(loss['class_loss'])
-        svd_losses_m.update(loss['svd_loss'])
-        
+        losses_m.update(loss.item())
         #* collect_gradients(cfg, model, all_gradients, epoch, step)
-        drift_monitor.update(outputs['feature_rec'][0])
+        drift_monitor.update(outputs[2][0]) # RD의 경우 decoder feature를 추출하기 위해 outputs[1][1] 사용         
         optimizer.step()
         
         batch_time_m.update(time.time() - end)
         
-        # Logging 
         adjusted_log_interval = log_interval if cfg.CONTINUAL.online else 1
         if (step + 1) % adjusted_log_interval == 0:
-            log_training_info(step, accelerator, dataloader, epoch, epochs, 
-                            losses_m ,feature_losses_m ,class_losses_m ,svd_losses_m,
-                            optimizer, batch_time_m, data_time_m, images)
-            
+            log_training_info(step, accelerator, dataloader, epoch, epochs, losses_m, optimizer, batch_time_m, data_time_m, images)
         do_online_inference(cfg, step, dataloader, model, accelerator, savedir, epoch, testloader, current_class_name, batch_time_m, optimizer)
         end = time.time()
     
     #! save_gradients_if_needed(cfg, dataloader, epoch, savedir, all_gradients)
     return {"loss": losses_m.avg, "gradients": all_gradients, "class_name": current_class_name}
+
+
 
 def test(model, dataloader, device, 
          savedir, use_wandb, epoch, optimizer, epoch_time_m, class_name, current_class_name,
@@ -129,12 +101,11 @@ def test(model, dataloader, device,
     pix_level = MetricCalculator(metric_list = ['auroc','average_precision'])     
 
     #! Inference     
-    for idx, (images, labels, class_labels, gts) in enumerate(dataloader):
+    for idx, (images, labels, _, gts) in enumerate(dataloader):
 
         with torch.no_grad():
-            Input = {'image':images,'clsname':class_labels}
-            outputs = model(Input)   
-            score_map = outputs['pred'].detach().cpu()            
+            outputs = model(images)   
+            score_map = model.get_score_map(outputs).detach().cpu()
             score = score_map.reshape(score_map.shape[0],-1).max(-1)[0]
                 
         # Stack Scoring for metrics 
@@ -167,6 +138,8 @@ def fit(
     epoch_time_m = AverageMeter()
     end = time.time() 
     
+    #drift monitor 
+    
     
     for n_task, (current_class_name, class_loader_dict) in enumerate(loader_dict.items()):
         if (n_task == 0) or (cfg.CONTINUAL.continual==False):
@@ -188,7 +161,6 @@ def fit(
         
         model, trainloader, testloader, optimizer, scheduler = accelerator.prepare(model, trainloader, testloader, optimizer, scheduler)
         
-        model = model.cuda()
         # Train 
         for epoch in range(epochs):
             # train one epoch 
@@ -211,21 +183,7 @@ def fit(
                 
                 epoch_time_m.update(time.time() - end)
                 end = time.time()
-                
-            if (epoch%2 == 0) or (epoch%199 == 0): 
-                test_metrics = test(
-                    model              = model, 
-                    dataloader         = testloader, 
-                    device             = accelerator.device, 
-                    savedir            = savedir, 
-                    use_wandb          = False,
-                    epoch              = epoch, 
-                    optimizer          = optimizer,
-                    epoch_time_m       = epoch_time_m, 
-                    class_name         = current_class_name,
-                    current_class_name = current_class_name
-                )
-                    
+        
         
         # EVALUATION
         num_current_class = list(loader_dict.keys()).index(current_class_name)
@@ -233,16 +191,16 @@ def fit(
         # model save
         os.makedirs(f"{savedir}/model_weight/", exist_ok=True)
         torch.save(model.state_dict(),f"{savedir}/model_weight/{current_class_name}_model.pth")
-    
+
         if cfg.CONTINUAL.continual:
             # Continual method 
-            _logger.info('Continual Learning consolidate')
+            # _logger.info('Continual Learning consolidate')
             # model.consolidate(trainloader)
             
             # Continual evaluation 
             num_start = 0 
-            num_end = num_current_class+2
-        
+            num_end = num_current_class+2 if num_current_class != len(loader_dict)-1 else len(loader_dict)
+
             for n_task in range(num_start,num_end):
                 class_name, class_loader_dict = list(loader_dict.items())[n_task]
                 trainloader, testloader = loader_dict[class_name]['train'],loader_dict[class_name]['test']
@@ -261,10 +219,11 @@ def fit(
                                 dataloader         = testloader,
                                 last               = True
                             )
+            model.incremental_learning_step(1)
         else:
             model  = __import__('models').__dict__[cfg.MODEL.method](
                 backbone    = cfg.MODEL.backbone,
                 **cfg.MODEL.params
-                ).cuda()
+                )
             model = accelerator.prepare(model)
             _logger.info('Model init')
