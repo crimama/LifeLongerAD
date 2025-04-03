@@ -7,3 +7,5 @@ from .cfir import CFIR
 from .continual_rd import ContinualReverseDistillation
 from .softpatch.softpatch import PatchCore
 from .proxycore import ProxyCore
+from .spade.spade import SPADE
+from .uniad import UniADBuilder

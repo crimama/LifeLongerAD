@@ -108,6 +108,8 @@ def parser(jupyter:bool = False, default_setting:str = None, model_setting:str =
     # IUF Config update 
     if cfg.MODEL.method == 'IUF':
         cfg = iuf_config_update(cfg)
+    elif cfg.MODEL.method == 'UniADBuilder':
+        cfg = iuf_config_update(cfg)
         
     
     # Print Experiment name 
@@ -123,6 +125,30 @@ def patchcore_arguments(cfg):
         
     return cfg 
 
+
+def uniad_update_config(config):
+    # update planes & strides
+    net_cfg = config.MODEL.params.net_cfg
+    backbone_path, backbone_type = net_cfg[0].type.rsplit(".", 1)
+    module = importlib.import_module(backbone_path)
+    backbone_info = getattr(module, "backbone_info")
+    backbone = backbone_info[backbone_type]
+    outplanes = []
+    for layer in net_cfg[0].kwargs.outlayers:
+        if layer not in backbone["layers"]:
+            raise ValueError(
+                "only layer {} for backbone {} is allowed, but get {}!".format(
+                    backbone["layers"], backbone_type, layer
+                )
+            )
+        idx = backbone["layers"].index(layer)
+        outplanes.append(backbone["planes"][idx])
+
+    net_cfg[2].kwargs.instrides = net_cfg[1].kwargs.outstrides
+    net_cfg[2].kwargs.inplanes = [sum(outplanes)]
+    
+    config.MODEL.params.net_cfg = net_cfg
+    return config
 
 
 def iuf_config_update(config):
