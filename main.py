@@ -106,12 +106,11 @@ def run(cfg):
     # optimizer 
     # if cfg.OPTIMIZER.name is not None:    
     if cfg.TRAIN.wandb.use:
-        wandb.init(name=f'{cfg.DEFAULT.exp_name}', project=cfg.TRAIN.wandb.project_name, config=OmegaConf.to_container(cfg))
-
-
+        from utils.log import wandb_init
+        wandb_init(cfg)
                 
     
-    if cfg.MODEL.method in ['IUF','CFIR','ProxyCore','SPADE','PatchCore','UniADBuilder']:
+    if cfg.MODEL.method in ['IUF','CFIR','ProxyCore','SPADE','PatchCore','UniADBuilder',"CFGCAD"]:
         TRAINER = __import__(f'train.train_{cfg.MODEL.method.lower()}', fromlist=f'train_{cfg.MODEL.method.lower()}').fit
         
     else: 

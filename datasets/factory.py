@@ -157,18 +157,6 @@ def train_test_split(df, max_ratio=0.2, anomaly_ratio=0.2):
 
 
 def get_mpdd_df(datadir: str, dataset_name: str, class_name: str, baseline: bool = True, anomaly_ratio: float = 0.0):
-    '''
-    args:
-        datadir : root of data 
-        class_name : the name of category 
-        baseline : dataset for reproduce performance of baseline if True or dataset for experiment of fully unsupervised 
-    Example:
-        df = get_btad_df(
-                ddataset_name = 'BTAD'
-                datadir       = './Data' , 
-                class_name    = 'toothbrush'
-            ) 
-    '''
     # get img_dirs dataframe 
     
     img_dirs = pd.Series(sorted(glob(os.path.join(datadir,dataset_name,str(class_name),'*','*','*'))))

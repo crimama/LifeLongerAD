@@ -8,6 +8,8 @@ from collections import OrderedDict
 import torch
 from river.drift import ADWIN
 from logging.handlers import RotatingFileHandler
+    
+    
 
 class DriftMonitor:
     def __init__(self, log_dir: str = None, log_path: str = None, logger_name: str = "DriftMonitor.log"):
@@ -170,8 +172,20 @@ def metric_logging(savedir, use_wandb=None,
     
     save_metrics_to_csv(dict(metrics), os.path.join(savedir,'results/result_log.csv'))
     
+    
     if use_wandb:
-        wandb.log(metrics, step=epoch)
+        wandb.log(
+                {
+                'Train/Epoch': epoch,  
+                'Test/class_name' : list(class_name),
+                'Test/GT_class_name' : list(current_class_name), 
+                'Test/img_level_auroc': test_metrics['img_level']['auroc'],
+                'Test/img_level_average_precision': test_metrics['img_level']['average_precision'],
+                'Test/pix_level_auroc': test_metrics['pix_level']['auroc'],
+                'Test/pix_level_average_precision': test_metrics['pix_level']['average_precision'],                
+                'Time/Test Batch Average (s)' : epoch_time_m.avg
+            }
+        )
         
         
 def save_metrics_to_csv(metrics, csv_filename):
@@ -203,3 +217,75 @@ def save_metrics_to_csv(metrics, csv_filename):
 
         # 데이터 행 추가
         writer.writerow(flat_data)
+        
+
+def wandb_init(config):
+    log_config = extract_experiment_summary(config)
+    wandb.init(name=f'{config.DEFAULT.exp_name}', project=config.TRAIN.wandb.project_name, config=log_config)   
+        
+def extract_experiment_summary(config):
+    """
+    YAML 설정 딕셔너리에서 실험의 핵심 요소만 추출하여 새로운 딕셔너리로 반환합니다.
+    """
+    summary = {}
+
+    # --- 기본 설정 ---
+    default_cfg = config.get('DEFAULT', {})
+    summary['seed'] = default_cfg.get('seed')
+    summary['exp_name'] = default_cfg.get('exp_name') # 실험 이름 포함
+
+    # --- 데이터셋 설정 ---
+    dataset_cfg = config.get('DATASET', {})
+    summary['dataset_name'] = dataset_cfg.get('dataset_name')
+    summary['batch_size'] = dataset_cfg.get('batch_size')
+    summary['img_size'] = dataset_cfg.get('img_size')
+    
+    # 데이터셋 파라미터 (Anomaly Ratio, Baseline 등)
+    dataset_params = dataset_cfg.get('params', {})
+    summary['anomaly_ratio'] = dataset_params.get('anomaly_ratio')
+    summary['baseline_mode'] = dataset_params.get('baseline')
+
+    # 클래스 이름 목록 단순화 (중첩 리스트 -> 단일 리스트)
+    original_class_names = dataset_cfg.get('class_names', [])
+    simplified_class_names = []
+    if isinstance(original_class_names, list):
+        for item in original_class_names:
+            if isinstance(item, list):
+                simplified_class_names.extend(item)
+            else:
+                simplified_class_names.append(item)
+    summary['dataset_class_names'] = simplified_class_names
+
+    # --- 옵티마이저 설정 ---
+    optimizer_cfg = config.get('OPTIMIZER', {})
+    summary['optimizer_name'] = optimizer_cfg.get('opt_name')
+    summary['learning_rate'] = optimizer_cfg.get('lr')
+    # 옵티마이저 상세 파라미터 (betas 등)
+    summary['optimizer_params'] = optimizer_cfg.get('params') 
+
+    # --- 학습 설정 ---
+    train_cfg = config.get('TRAIN', {})
+    summary['epochs'] = train_cfg.get('epochs')
+    summary['grad_accum_steps'] = train_cfg.get('grad_accum_steps')
+    summary['mixed_precision'] = train_cfg.get('mixed_precision')
+
+    # --- 연속 학습 설정 ---
+    continual_cfg = config.get('CONTINUAL', {})
+    summary['is_continual'] = continual_cfg.get('continual')
+    summary['is_online'] = continual_cfg.get('online')
+    # 연속 학습 방법 이름 (EMPTY가 아니라면 중요할 수 있음)
+    summary['continual_method'] = continual_cfg.get('method', {}).get('name') 
+
+    # --- 스케줄러 설정 ---
+    scheduler_cfg = config.get('SCHEDULER', {})
+    scheduler_name = scheduler_cfg.get('name')
+    # 스케줄러가 'null'이나 None이 아닐 경우에만 이름과 파라미터 포함
+    if scheduler_name and scheduler_name.lower() != 'null':
+        summary['scheduler_name'] = scheduler_name
+        summary['scheduler_params'] = scheduler_cfg.get('params')
+    else:
+        summary['scheduler_name'] = None # 명시적으로 스케줄러 없음 표시
+        
+    # --- 모델 파라미터 
+    summary.update(config.MODEL.params.net_cfg[2].kwargs)
+    return summary

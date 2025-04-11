@@ -7,13 +7,17 @@ gpu_id=$1
 
 # GPU ID에 따라 method_setting 설정
 if [ "$gpu_id" -eq 0 ]; then
-    method_setting="proxycore"
-    continual='false'
-    gpu_id=0
-elif [ "$gpu_id" -eq 1 ]; then
-    method_setting="rd"
+    method_setting="cfgcad"
     continual='true'
     gpu_id=0
+elif [ "$gpu_id" -eq 1 ]; then
+    method_setting="proxycore"
+    continual='false'
+    gpu_id=1
+elif [ "$gpu_id" -eq 2 ]; then
+    method_setting="proxycore"
+    continual='false'
+    gpu_id=2
 else
     echo "Invalid GPU ID. Please use 0 or 1."
     exit 1
@@ -44,7 +48,7 @@ do
                     CUDA_VISIBLE_DEVICES=$gpu_id python main.py \
                         default_setting=./configs/default/$d.yaml \
                         model_setting=./configs/model/$m.yaml \
-                        DEFAULT.exp_name=Nsoftmax-focal_loss \
+                        DEFAULT.exp_name=baseline-3_5_with_5_step \
                         CONTINUAL.continual=$c \
                         CONTINUAL.online=$o \
                         CONTINUAL.method.name=$cm
@@ -53,3 +57,8 @@ do
         done
     done
 done
+
+# tmux 0 | gpu : 6 | Nsoftmax-focal_loss
+# tmux 1 | gpu : 7 | Nsoftmax_crossentropy
+# tmux 2 | gpu : 0 | ArcMarginProduct
+# tmux 3 | gpu : 1 | Softtriple

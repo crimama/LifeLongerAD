@@ -18,7 +18,7 @@ MODEL:
     temperature: 0.05
     loss_fn: focalloss #CrossEntropy focalloss
     device: cuda:0
-    proxy: CoreProxy #ProxyNCA CoreProxy ProxyAnchor
+    proxy: CoreProxy #ProxyNCA CoreProxy ProxyAnchor Softtriple ArcMarginProduct
 
 
 OPTIMIZER:

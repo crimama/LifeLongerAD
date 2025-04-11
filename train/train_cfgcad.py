@@ -1,3 +1,4 @@
+import wandb 
 import logging
 import time
 import os 
@@ -29,15 +30,14 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
             all_gradients.append(step_grad_dict)
     
     def log_training_info(step, accelerator, dataloader, epoch, epochs,
-                      losses_m, feature_losses_m, class_losses_m, svd_losses_m,
-                      optimizer, batch_time_m, data_time_m, images):
+                      losses_m, feature_losses_m, svd_losses_m,
+                      optimizer, batch_time_m, data_time_m, images, wandb_use:bool = False):
         current_step = (step + 1) // accelerator.gradient_accumulation_steps
         total_steps = len(dataloader) // accelerator.gradient_accumulation_steps
         _logger.info(
             'Train Epoch [{epoch}/{epochs}] [{current_step:d}/{total_steps:d}] '
             'Total Loss: {loss_val:>6.4f} | '
-            'Feature Loss: {feature_loss_val:>6.4f} | '
-            'Class Loss: {class_loss_val:>6.4f} | '
+            'Feature Loss: {feature_loss_val:>6.4f} | '            
             'SVD Loss: {svd_loss_val:>6.4f} | '
             'LR: {lr:.3e} | '
             'Time: {batch_time_avg:.3f}s, {rate_avg:>3.2f}/s | '
@@ -48,13 +48,29 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
                 epochs=epochs,
                 loss_val=losses_m.val,
                 feature_loss_val=feature_losses_m.val,
-                class_loss_val=class_losses_m.val,
                 svd_loss_val=svd_losses_m.val,
                 lr=optimizer.param_groups[0]['lr'],
                 batch_time_avg=batch_time_m.avg,
                 rate_avg=images[0].size(0) / batch_time_m.avg,
                 data_time_avg=data_time_m.avg
             )
+        )
+        
+        if wandb_use:
+            wandb.log(
+                {
+                'Train/Epoch': epoch,  # 현재 에포크 로깅 (선택 사항)
+                'Train/Total Loss': losses_m.avg, # 평균 손실 로깅
+                'Train/Feature Loss': feature_losses_m.avg,
+                'Train/SVD Loss': svd_losses_m.avg,
+                'Train/Learning Rate': optimizer.param_groups[0]['lr'],
+                'Time/Train Batch Average (s)': batch_time_m.avg,
+                'Time/Processing Rate (img/s)': images[0].size(0) / batch_time_m.avg,
+                'Time/Data Loading Average (s)': data_time_m.avg,
+                'Train/Total Loss (val)': losses_m.val,
+                'Train/Feature Loss (val)': feature_losses_m.val,
+                'Train/SVD Loss (val)': svd_losses_m.val,
+            }
         )
 
     
@@ -77,7 +93,6 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
     
     losses_m = AverageMeter()
     feature_losses_m = AverageMeter()
-    class_losses_m = AverageMeter()
     svd_losses_m = AverageMeter()
     
     current_class_name = dataloader.dataset.class_name
@@ -90,7 +105,6 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
         data_time_m.update(time.time() - end)
         
         # Training 
-        breakpoint()
         outputs = model(Input) 
         loss = model.criterion(outputs, Input)
         optimizer.zero_grad()
@@ -99,26 +113,23 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
         # Loss record  
         losses_m.update(loss['loss'].item())
         feature_losses_m.update(loss['feature_loss'])
-        class_losses_m.update(loss['class_loss'])
         svd_losses_m.update(loss['svd_loss'])
         
         #* collect_gradients(cfg, model, all_gradients, epoch, step)
         drift_monitor.update(outputs['feature_rec'][0])
         optimizer.step()
         
-        batch_time_m.update(time.time() - end)
-        
+        batch_time_m.update(time.time() - end)        
         # Logging 
         adjusted_log_interval = log_interval if cfg.CONTINUAL.online else 1
         if (step + 1) % adjusted_log_interval == 0:
             log_training_info(step, accelerator, dataloader, epoch, epochs, 
-                            losses_m ,feature_losses_m ,class_losses_m ,svd_losses_m,
-                            optimizer, batch_time_m, data_time_m, images)
+                            losses_m ,feature_losses_m ,svd_losses_m,
+                            optimizer, batch_time_m, data_time_m, images, wandb_use=cfg.TRAIN.wandb.use)
             
-        do_online_inference(cfg, step, dataloader, model, accelerator, savedir, epoch, testloader, current_class_name, batch_time_m, optimizer)
+        # do_online_inference(cfg, step, dataloader, model, accelerator, savedir, epoch, testloader, current_class_name, batch_time_m, optimizer)
         end = time.time()
     
-    #! save_gradients_if_needed(cfg, dataloader, epoch, savedir, all_gradients)
     return {"loss": losses_m.avg, "gradients": all_gradients, "class_name": current_class_name}
 
 def test(model, dataloader, device, 
@@ -129,7 +140,10 @@ def test(model, dataloader, device,
     img_level = MetricCalculator(metric_list = ['auroc','average_precision'])
     pix_level = MetricCalculator(metric_list = ['auroc','average_precision'])     
 
+    test_time_m = AverageMeter()    
+    
     #! Inference     
+    end = time.time()
     for idx, (images, labels, class_labels, gts) in enumerate(dataloader):
 
         with torch.no_grad():
@@ -141,17 +155,19 @@ def test(model, dataloader, device,
         # Stack Scoring for metrics 
         pix_level.update(score_map,gts.type(torch.int))
         img_level.update(score, labels.type(torch.int))
+        
+        test_time_m.update(time.time() - end)
+        end = time.time()
             
     i_results, p_results = img_level.compute(), pix_level.compute()
     _logger.info(f"Current Class name : {current_class_name} Class name : {class_name} Image AUROC: {i_results['auroc']:.3f}| Pixel AUROC: {p_results['auroc']:.3f}")
         
     test_result = OrderedDict(img_level = i_results)
-    test_result.update([('pix_level', p_results)])            
-    
+    test_result.update([('pix_level', p_results)])
     
     metric_logging(
             savedir = savedir, use_wandb = use_wandb, epoch = epoch,
-            optimizer = optimizer, epoch_time_m = epoch_time_m,
+            optimizer = optimizer, epoch_time_m = test_time_m,
             test_metrics = test_result,
             class_name = class_name, current_class_name = current_class_name,
             **{'last' : last}
@@ -178,8 +194,7 @@ def fit(
             
         # Init optimzier & SCheduler 
         optimizer = __import__('torch.optim',fromlist='optim').__dict__[cfg.OPTIMIZER.opt_name](model.parameters(), lr=cfg.OPTIMIZER.lr, **cfg.OPTIMIZER.params)        
-        if cfg.SCHEDULER.name is not None:            
-            
+        if cfg.SCHEDULER.name is not None:                        
             scheduler = __import__('torch.optim.lr_scheduler', fromlist='lr_scheduler').__dict__[cfg.SCHEDULER.name](optimizer, **cfg.SCHEDULER.params)
         else:
             scheduler = None
@@ -207,6 +222,7 @@ def fit(
                     cfg          = cfg,
                     drift_monitor= drift_monitor 
                 )
+             
             if scheduler:
                 scheduler.step()
                 
@@ -219,7 +235,7 @@ def fit(
                     dataloader         = testloader, 
                     device             = accelerator.device, 
                     savedir            = savedir, 
-                    use_wandb          = False,
+                    use_wandb          = use_wandb,
                     epoch              = epoch, 
                     optimizer          = optimizer,
                     epoch_time_m       = epoch_time_m, 
@@ -242,9 +258,13 @@ def fit(
             
             # Continual evaluation 
             num_start = 0 
-            num_end = num_current_class+2
+            num_end = num_current_class+1 if num_current_class == len(loader_dict)-1 else num_current_class+2
         
             for n_task in range(num_start,num_end):
+                print('\n')
+                print(f"loader_dict : {len(list(loader_dict.items()))}")
+                print(f"n_task : {n_task}")
+                print('\n')
                 class_name, class_loader_dict = list(loader_dict.items())[n_task]
                 trainloader, testloader = loader_dict[class_name]['train'],loader_dict[class_name]['test']
                 trainloader, testloader = accelerator.prepare(trainloader, testloader)            

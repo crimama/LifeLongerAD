@@ -9,3 +9,4 @@ from .softpatch.softpatch import PatchCore
 from .proxycore import ProxyCore
 from .spade.spade import SPADE
 from .uniad import UniADBuilder
+from .cfgcad import CFGCAD # <--- Add this line

@@ -1,24 +1,25 @@
 OPTIMIZER:
   opt_name: AdamW
-  lr: 0.0001
+  lr: 0.001
   params:
     betas: [0.9, 0.999]
     weight_decay: 0.0001
 
 TRAIN:
-  epochs: 200
+  epochs: 100
   mixed_precision: 'no'
     
-SCHEDULER: 
-  name: StepLR
-  params: 
-    step_size: 50000
-    gamma: 0.1
-
-
+SCHEDULER:
+  name: CyclicLR
+  params:
+    base_lr: 0.0001
+    max_lr: 0.0005
+    step_size_up: 20
+    mode: exp_range
+    gamma: 0.995
 
 MODEL:
-  method : IUF
+  method : CFGCAD
   backbone : None 
   params: 
     criterion_cfg:        
@@ -34,7 +35,7 @@ MODEL:
           kwargs: {}
     net_cfg:
         - name: backbone
-          type: models.iuf.backbones.efficientnet_b4
+          type: models.cfgcad.backbones.efficientnet_b4
           frozen: True
           kwargs:
             pretrained: True
@@ -43,12 +44,12 @@ MODEL:
             outlayers: [1,2,3,4]
         - name: neck
           prev: backbone
-          type: models.iuf.necks.MFCN
+          type: models.cfgcad.necks.MFCN
           kwargs:
             outstrides: [16]
         - name: reconstruction
           prev: neck
-          type: models.iuf.reconstructions.CFGReconstruction
+          type: models.cfgcad.reconstructions.CFGReconstruction
           kwargs: 
             pos_embed_type: learned
             hidden_dim: 256
@@ -69,4 +70,8 @@ MODEL:
               save_dir: result_recon
             initializer:
               method: xavier_uniform
+            cfg_embed_dim: 128
+            uncond_prob: 0.1
+            guidance_scale: 7.5
+            feature_dim: 256 
     

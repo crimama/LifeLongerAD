@@ -51,3 +51,8 @@ SCHEDULER:
   name: null
   params: null
     
+CONTINUAL:
+  continual : True
+  online: false
+  method: 
+    name: EMPTY

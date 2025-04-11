@@ -106,9 +106,7 @@ def parser(jupyter:bool = False, default_setting:str = None, model_setting:str =
     cfg.DEFAULT.exp_name = f"{cfg.DEFAULT.exp_name}-Continual_{cfg.CONTINUAL.continual}-online_{cfg.CONTINUAL.online}"
     
     # IUF Config update 
-    if cfg.MODEL.method == 'IUF':
-        cfg = iuf_config_update(cfg)
-    elif cfg.MODEL.method == 'UniADBuilder':
+    if cfg.MODEL.method in ['IUF','UniADBuilder','CFGCAD']:
         cfg = iuf_config_update(cfg)
         
     
@@ -154,7 +152,7 @@ def uniad_update_config(config):
 def iuf_config_update(config):
     # update feature size
     _, reconstruction_type = config.MODEL.params.net_cfg[2].type.rsplit(".", 1)
-    if reconstruction_type == "UniAD":
+    if reconstruction_type in ["UniAD","CFGReconstruction"]:
         input_size = [config.DATASET.img_size for i in range(2)]
         outstride = config.MODEL.params.net_cfg[1].kwargs.outstrides[0]
         assert (
@@ -163,7 +161,7 @@ def iuf_config_update(config):
         assert (
             input_size[1] % outstride == 0
         ), "input_size must could be divided by outstrides exactly!"
-        feature_size = [s // outstride for s in input_size]
+        feature_size = [s // outstride for s in input_size]        
         config.MODEL.params.net_cfg[2].kwargs.feature_size = feature_size
 
     # update planes & strides
@@ -193,5 +191,8 @@ def iuf_config_update(config):
         config.MODEL.params.net_cfg[0].kwargs.outblocks = outblocks
     config.MODEL.params.net_cfg[0].kwargs.outstrides = outstrides
     config.MODEL.params.net_cfg[1].kwargs.outplanes = sum(outplanes)
+    
+    # if "MVTecAD" == config.DATASET.dataset_name:
+    #     config.MODEL.params.net_cfg[2].kwargs.num_classes
 
     return config

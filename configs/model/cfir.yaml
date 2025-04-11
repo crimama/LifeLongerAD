@@ -1,0 +1,30 @@
+OPTIMIZER:
+  opt_name: Adam
+  lr: 0.0005
+  params:
+    betas: 
+    - 0.5
+    - 0.999
+    
+TRAIN:
+  epochs: 15
+  mixed_precision: 'no'
+  
+MODEL:
+  method: CFIR
+  backbone: ViT-B-16
+  params:
+    input_size:
+      - 224
+      - 224
+    initial_classes: 1 
+    extract_layers:
+      - 3
+      - 6
+      - 9
+    mid_block: 2    
+    guidance_scale: 3
+
+DATASET:
+  datadir: ../Data
+  batch_size: 8
