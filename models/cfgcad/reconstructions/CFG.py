@@ -629,104 +629,125 @@ class CFGReconstruction(nn.Module):
         
         
     def forward(self, input, task_id=None):
-        feature_align = input["feature_align"]  # B x C X H x W #? MFCN에서 size 맞춰준 feature
-        src, pos_embed = self.forward_pre(feature_align)
+        feature_align = input["feature_align"]  # B x C X H x W
+        src, pos_embed = self.forward_pre(feature_align) # L, B, C 와 (H*W), C
         device = feature_align.device
+        B = feature_align.shape[0]
+
         if self.training:
             if task_id is None: raise ValueError("task_id required for training")
-            B = feature_align.shape[0]
-            
-            uncond_mask = torch.rand(B, device=device) < self.uncond_prob
-            masked_task_id = task_id.clone()
-            masked_task_id[uncond_mask] = self.null_token_idx
 
-            task_emb = self.task_embedding(masked_task_id) # B, D_cfg
-            task_emb_proj = self.task_proj(task_emb) # B, D_feat
+            # --- Conditional Pass ---
+            task_emb_cond = self.task_embedding(task_id) # B, D_cfg
+            task_emb_cond_proj = self.task_proj(task_emb_cond) # B, D_feat
+            features_cond = src + task_emb_cond_proj.unsqueeze(0) # L, B, C
+            # Transformer 통과 (중간 특징 포함)
+            output_decoder_cond, _ = self.transformer(features_cond, pos_embed) # 4, L, B, C 또는 L, B, C (transformer 출력 형태에 따라)
 
-            #! --- Task 임베딩을 src에 더하기 ---
-            # src: L, B, C / task_emb_proj: B, C -> unsqueeze -> 1, B, C
-            conditioned_src = src + task_emb_proj.unsqueeze(0)
+            # 중간 특징 추출 (Conditional Pass 기준) - transformer 출력이 튜플/리스트 형태라고 가정
+            # output_decoder_cond가 (intermediate_outputs, final_output) 형태일 경우:
+            # middle_decoder_feature = output_decoder_cond[0] # 예시: 첫번째 요소가 중간 출력들의 스택이라고 가정
+            # rec_tokens_cond = output_decoder_cond[1] # 예시: 두번째 요소가 최종 출력이라고 가정
 
-            #! --- Single pass through Transformer ---
-            output_decoder, _ = self.transformer(conditioned_src, pos_embed) # mask 인자 필요시 추가
-            middle_decoder_feature=output_decoder[0:3,...]
-               
-            middle_decoder_feature_rec_0 = rearrange(
-                middle_decoder_feature[0], "(h w) b c -> b c (h w)", h=self.feature_size[0]
-            )  
-            middle_decoder_feature_rec_1 = rearrange(
-                middle_decoder_feature[1], "(h w) b c -> b c (h w)", h=self.feature_size[0]
-            )  
-            middle_decoder_feature_rec_2 = rearrange(
-                middle_decoder_feature[2], "(h w) b c -> b c (h w)", h=self.feature_size[0]
-            )   
-            
-            ##! 최종 reconstruction 출력 
-            output_decoder = output_decoder[3]
-            # rec_tokens = output_decoder.permute(1, 0, 2) # --- 출력 shape 변경: L, B, C -> B, L, C ---            
-            rec_feature = self.rec_head(output_decoder)
+            # output_decoder_cond가 중간 출력들을 포함한 스택 형태일 경우 (원래 코드처럼):
+            middle_decoder_feature = output_decoder_cond[0:3,...] # 3, L, B, C
+            rec_tokens_cond = output_decoder_cond[3] # L, B, C (최종 디코더 레이어 출력)
+
+            # --- Unconditional Pass ---
+            null_task_id = torch.full_like(task_id, self.null_token_idx)
+            task_emb_uncond = self.task_embedding(null_task_id) # B, D_cfg
+            task_emb_uncond_proj = self.task_proj(task_emb_uncond) # B, D_feat
+            features_uncond = src + task_emb_uncond_proj.unsqueeze(0) # L, B, C
+            # Transformer 통과 (최종 출력만 필요)
+            # intermediate_outputs가 필요 없다면 return_intermediate_dec=False 로 설정하거나 마지막 출력만 사용
+            output_decoder_uncond, _ = self.transformer(features_uncond, pos_embed) # transformer 출력 형태에 따라 조정 필요
+
+            # 최종 디코더 레이어 출력만 사용
+            # output_decoder_uncond가 스택 형태일 경우:
+            rec_tokens_uncond = output_decoder_uncond[3] # L, B, C
+
+            # --- Apply CFG Formula during Training ---
+            # 학습 시 사용할 guidance_scale 결정 (self.guidance_scale 또는 별도 변수)
+            # 예시: self.training_guidance_scale 이라는 별도 변수 사용 가능
+            # 여기서는 일단 self.guidance_scale 사용
+            guided_tokens_lbc = rec_tokens_uncond + self.guidance_scale * (rec_tokens_cond - rec_tokens_uncond) # L, B, C
+
+            # --- 최종 Reconstruction 출력 계산 ---
+            rec_feature = self.rec_head(guided_tokens_lbc) # L, B, C
             feature_rec = rearrange(
                 rec_feature, "(h w) b c -> b c h w", h=self.feature_size[0]
             )  # B x C X H x W
-            
-            #! loss 계산 
+
+            # --- 중간 특징 Rearrange (Conditional Pass 기준) ---
+            middle_decoder_feature_rec_0 = rearrange(
+                middle_decoder_feature[0], "(h w) b c -> b c (h w)", h=self.feature_size[0]
+            )
+            middle_decoder_feature_rec_1 = rearrange(
+                middle_decoder_feature[1], "(h w) b c -> b c (h w)", h=self.feature_size[0]
+            )
+            middle_decoder_feature_rec_2 = rearrange(
+                middle_decoder_feature[2], "(h w) b c -> b c (h w)", h=self.feature_size[0]
+            )
+
+            # --- Loss 계산용 Pred 값 계산 ---
+            # pred 계산은 최종 feature_rec 기반으로 수행
             pred = torch.sqrt(
                 torch.sum((feature_rec - feature_align) ** 2, dim=1, keepdim=True)
             )  # B x 1 x H x W
-            
-            pred = self.upsample(pred)  # B x 1 x H x W   
+            pred = self.upsample(pred)  # B x 1 x H x W
+
             return {
-                "feature_rec": feature_rec,
+                "feature_rec": feature_rec, # 가이드된 최종 재구성 특징
                 "feature_align": feature_align,
-                "pred": pred,
-                "middle_decoder_feature_0": middle_decoder_feature_rec_0,
-                "middle_decoder_feature_1": middle_decoder_feature_rec_1,
-                "middle_decoder_feature_2": middle_decoder_feature_rec_2,
-            }         
-            
+                "pred": pred, # 가이드된 최종 재구성 특징 기반 pred
+                "middle_decoder_feature_0": middle_decoder_feature_rec_0, # 조건부 중간 특징
+                "middle_decoder_feature_1": middle_decoder_feature_rec_1, # 조건부 중간 특징
+                "middle_decoder_feature_2": middle_decoder_feature_rec_2, # 조건부 중간 특징
+            }
+
         else: # Inference
+            # 추론 시에는 원래 로직 유지 (Weight Conditional Pass 등)
             if task_id is None:
-                B = feature_align.shape[0]
                 task_id = torch.full((B,), self.null_token_idx, dtype=torch.long, device=device)
-                
 
-            # --- Conditional Pass ---
-            # task_emb_cond = self.task_embedding(task_id)
-            # task_emb_cond_proj = self.task_proj(task_emb_cond)
-            # features_cond = src + task_emb_cond_proj.unsqueeze(0) # L, B, C
-            # rec_tokens_cond, _ = self.transformer(features_cond, pos_embed) # L, B, C
-            # rec_tokens_cond = rec_tokens_cond[3]
-            
-            # --- Weight Conditional Pass ---
-            task_embedding = self.task_proj(self.task_embedding.weight)
-            weight = F.softmax((F.normalize(task_embedding,p=2,dim=1) @ F.normalize(src.mean(0),p=2,dim=1).T),dim=0)
-            task_emb_cond_proj = (weight.T @ task_embedding)
+            # --- Weight Conditional Pass (기존 로직) ---
+            task_embedding_weights = self.task_proj(self.task_embedding.weight) # num_classes+1, D_feat
+            # src.mean(0): B, C
+            # task_embedding_weights: num_tasks, D_feat
+            # weight: num_tasks, B
+            normalized_src_mean = F.normalize(src.mean(0), p=2, dim=1) # B, C
+            normalized_task_embeddings = F.normalize(task_embedding_weights, p=2, dim=1) # num_tasks, D_feat
+            # 유사도 계산 및 softmax
+            similarity = normalized_task_embeddings @ normalized_src_mean.T # num_tasks, B
+            weight = F.softmax(similarity, dim=0) # 각 배치 샘플에 대한 태스크 가중치
+            # 가중합 계산
+            task_emb_cond_proj = (weight.T @ task_embedding_weights) # B, D_feat
             features_cond = src + task_emb_cond_proj.unsqueeze(0) # L, B, C
-            rec_tokens_cond, _ = self.transformer(features_cond, pos_embed) # L, B, C
-            rec_tokens_cond = rec_tokens_cond[3]
+            rec_tokens_cond, _ = self.transformer(features_cond, pos_embed) # transformer 출력 형태에 따라 조정 필요
+            rec_tokens_cond = rec_tokens_cond[3] # L, B, C (최종 출력)
 
-            # --- Unconditional Pass ---
+            # --- Unconditional Pass (기존 로직) ---
             null_task_id = torch.full_like(task_id, self.null_token_idx)
             task_emb_uncond = self.task_embedding(null_task_id)
             task_emb_uncond_proj = self.task_proj(task_emb_uncond)
             features_uncond = src + task_emb_uncond_proj.unsqueeze(0) # L, B, C
-            rec_tokens_uncond, _ = self.transformer(features_uncond, pos_embed) # L, B, C
-            rec_tokens_uncond = rec_tokens_uncond[3] 
-            
-            # --- Apply CFG Formula ---
+            rec_tokens_uncond, _ = self.transformer(features_uncond, pos_embed) # transformer 출력 형태에 따라 조정 필요
+            rec_tokens_uncond = rec_tokens_uncond[3] # L, B, C (최종 출력)
+
+            # --- Apply CFG Formula (기존 로직) ---
             guided_tokens_lbc = rec_tokens_uncond + self.guidance_scale * (rec_tokens_cond - rec_tokens_uncond)
 
-            # --- 출력 shape 변경: L, B, C -> B, L, C ---
+            # --- 최종 출력 계산 (기존 로직) ---
             rec_feature = self.rec_head(guided_tokens_lbc)
             feature_rec = rearrange(
                 rec_feature, "(h w) b c -> b c h w", h=self.feature_size[0]
             )  # B x C X H x W
-            
+
             pred = torch.sqrt(
                 torch.sum((feature_rec - feature_align) ** 2, dim=1, keepdim=True)
             )  # B x 1 x H x W
-            
             pred = self.upsample(pred)  # B x 1 x H x W
+
             return {
                 "feature_rec": feature_rec,
                 "feature_align": feature_align,
