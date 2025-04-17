@@ -39,10 +39,11 @@ class IUFCriterion:
         """
         feature_loss = self._feature_loss(outputs) if 'FeatureMSELoss' in self.criterion_list else 0 
 
-        svd_loss = self._svd_loss(outputs)*10 if 'SVDLoss' in self.criterion_list else 0 
+        svd_loss = self._svd_loss(outputs) if 'SVDLoss' in self.criterion_list else 0 
 
         # 전체 loss 계산 (skip 플래그에 따라 SVD 손실 가중치 적용)
-        loss = feature_loss + svd_loss      
+        loss = feature_loss + svd_loss 
+
 
         return {'loss':loss,
                 'feature_loss':feature_loss.item(),
@@ -63,6 +64,7 @@ class IUFCriterion:
         매 배치마다 새로운 특징 텐서를 누적하고, 일정 크기(여기서는 768 이상) 초과 시 앞부분을 잘라냅니다.
         이후, self.SVDLoss를 호출하여 손실을 계산합니다.
         """
+        
         # 중간 디코더 특징 텐서를 복사 및 누적 (detach로 기울기 전파 차단)
         feat0 = outputs["middle_decoder_feature_0"].clone().detach()
         feat1 = outputs["middle_decoder_feature_1"].clone().detach()

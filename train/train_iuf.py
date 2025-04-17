@@ -89,8 +89,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
         Input = {'image':images,'clslabel':class_labels}
         data_time_m.update(time.time() - end)
         
-        # Training 
-        breakpoint()
+        # Training         
         outputs = model(Input) 
         loss = model.criterion(outputs, Input)
         optimizer.zero_grad()
