@@ -28,27 +28,27 @@ def compute_continual_result(result: pd.DataFrame,
     class_name_list = result['class_name'].unique()
     
     if continual:
+        # AA: class_name, last 열을 제외한 열의 평균값 계산 후 마지막 행에 추가
         main_result = result.loc[(result['last'] == 1) & (result['GT_class_name'] == last_class)] \
                             .reset_index(drop=True) \
-                            .drop(columns=['task', 'epoch', 'GT_class_name', 'epoch_time'])
-        
-        # AA: class_name, last 열을 제외한 열의 평균값 계산 후 마지막 행에 추가
+                            .drop(columns=['task', 'epoch', 'GT_class_name', 'epoch_time'])        
         aa_values = main_result.drop(columns=['class_name', 'last']).mean()
         aa_values['class_name'] = 'AA'
+        
         main_result = pd.concat([main_result, pd.DataFrame(aa_values).T], ignore_index=True)
     
         # === Forgetting, BWT, FWT 계산 ===
         
         forgetting_result = pd.DataFrame()
         # 첫 클래스는 제외 (예: 첫 클래스는 기준이므로)
-        for cln in class_name_list[1:]:
+        for cln in class_name_list[0:]:
             # 현재 클래스에 해당하는 데이터 추출 (불필요한 열 제거)
             temp = result[result['class_name'] == cln].drop(columns=['task', 'epoch', 'epoch_time'])
             
             # 마지막 결과 행 추출 (last == 1)
             last_value = temp[temp['last'] == 1].iloc[-1]
             
-            # Average Forgetting (AF): 
+            # Average Forgetting (AF) == Forgetting Measure: 
             # last==0 인 경우의 수치형 값 최대치와 last_value의 차이를 계산
             max_value = temp[temp['last'] == 0].select_dtypes(include=['number']).max()
             AF = max_value - last_value
@@ -70,13 +70,18 @@ def compute_continual_result(result: pd.DataFrame,
             # eval 대신 직접 인덱싱하여 값을 추출합니다.
             data = {
                 'AF': [AF[m] for m in metric_list],
-                'BWT': [BWT[m].to_list() for m in metric_list],
-                'FWT': [FWT[m].to_list() for m in metric_list]
+                'BWT': [BWT[m].to_list()[0] for m in metric_list],
+                'FWT': [FWT[m].to_list()[0] for m in metric_list]
             }
             df_metrics = pd.DataFrame(data, index=metric_list).reset_index().rename(columns={'index': 'metric'})
             df_metrics['class_name'] = cln
             
             forgetting_result = pd.concat([forgetting_result, df_metrics], ignore_index=True)
+        
+        all_forgetting = forgetting_result.groupby(['metric'])[['AF','BWT','FWT']].mean().reset_index()
+        all_forgetting['class_name'] = 'all'
+        forgetting_result = pd.concat([forgetting_result, all_forgetting], ignore_index=True)
+            
                 
     else:        
         main_result = pd.DataFrame([result[result['GT_class_name'] == cln].iloc[-1] for cln in class_name_list]).drop(columns=['task','epoch','class_name','last','epoch_time']).reset_index(drop=True)

@@ -7,7 +7,7 @@ exp_id=$1
 
 # GPU ID에 따라 method_setting 설정
 if [ "$exp_id" -eq 141 ]; then
-    method_setting="cfgcad"
+    method_setting="iuf"
     continual='true'
     dataset='mvtecad_141'
     exp='14_1_with_1_step'
@@ -17,16 +17,18 @@ elif [ "$exp_id" -eq 35 ]; then
     continual='true'
     gpu_id=0
     exp='3_5_with_5_step'
-    dataset='mvtecad_141'
+    dataset='mvtecad_35'
 elif [ "$exp_id" -eq 1015 ]; then
     method_setting="cfgcad"
-    continual='false'
+    continual='true'
     exp='10_1_with_5_step'
+    dataset='mvtecad_1015'
     gpu_id=0
 elif [ "$exp_id" -eq 1051 ]; then
     method_setting="cfgcad"
-    continual='false'
+    continual='true'
     exp='10_5_with_1_step'
+    dataset='mvtecad_1051'
     gpu_id=0
 else
     echo "Invalid EXP number"
@@ -58,10 +60,12 @@ do
                     CUDA_VISIBLE_DEVICES=$gpu_id python main.py \
                         default_setting=./configs/default/$d.yaml \
                         model_setting=./configs/model/$m.yaml \
-                        DEFAULT.exp_name=baseline4_2-$exp \
+                        DEFAULT.exp_name=temp-$exp \
                         CONTINUAL.continual=$c \
                         CONTINUAL.online=$o \
-                        CONTINUAL.method.name=$cm
+                        CONTINUAL.method.name=$cm \
+                        TRAIN.epochs=1 \
+                        TRAIN.wandb.use=false
                 done
             done 
         done
