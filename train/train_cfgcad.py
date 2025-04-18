@@ -179,13 +179,12 @@ def fit(
     model, loader_dict:dict, accelerator,
     epochs: int, use_wandb: bool, log_interval: int, eval_interval: int, seed: int = None, savedir: str = None
     ,cfg=None):
-    print(savedir)
-    best_score = 0.0
+    print(savedir)    
     epoch_time_m = AverageMeter()
     end = time.time() 
     
-    
     for n_task, (current_class_name, class_loader_dict) in enumerate(loader_dict.items()):
+        best_score = 0.0
         if (n_task == 0) or (cfg.CONTINUAL.continual==False):
             drift_monitor = DriftMonitor(log_dir=os.path.join(savedir,'DriftMonitor.log'))
         
@@ -244,12 +243,14 @@ def fit(
                 )
                     
         
-        # EVALUATION
-        num_current_class = list(loader_dict.keys()).index(current_class_name)
-        
-        # model save
-        os.makedirs(f"{savedir}/model_weight/", exist_ok=True)
-        torch.save(model.state_dict(),f"{savedir}/model_weight/{current_class_name}_model.pth")
+            # EVALUATION
+            num_current_class = list(loader_dict.keys()).index(current_class_name)            
+            # model save
+            score = (test_metrics['img_level']['auroc'] + test_metrics['pix_level']['auroc']) / 2
+            if best_score < score:
+                os.makedirs(f"{savedir}/model_weight/", exist_ok=True)
+                torch.save(model.state_dict(),f"{savedir}/model_weight/{current_class_name}_model.pth")
+                best_score = score 
     
         if cfg.CONTINUAL.continual:
             # Continual method 
