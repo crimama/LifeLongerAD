@@ -38,10 +38,12 @@ class IUFCriterion:
             tuple: (전체 loss, feature_loss, class_loss, svd_loss)
         """
         feature_loss = self._feature_loss(outputs) if 'FeatureMSELoss' in self.criterion_list else 0 
-
-        class_loss = self._ce_loss(outputs, inputs)  if 'CELoss' in self.criterion_list else 0 
+        
 
         svd_loss = self._svd_loss(outputs) if 'SVDLoss' in self.criterion_list else 0 
+        
+        class_loss = self._ce_loss(outputs, inputs) if 'CELoss' in self.criterion_list else 0 
+        
 
         # 전체 loss 계산 (skip 플래그에 따라 SVD 손실 가중치 적용)
         loss = feature_loss + class_loss

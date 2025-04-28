@@ -48,7 +48,7 @@ class CFGReconstruction(nn.Module):
              'feature_size': kwargs.get('feature_size'), # feature_size 계산 로직 필요 (아래 참고)
              'neighbor_mask': kwargs.get('neighbor_mask', None), # neighbor_mask 객체 전달 방식 확인
              'nhead': kwargs.get('nhead', 8),
-             'num_encoder_layers': kwargs.get('num_encoder_layers', 4),
+             'num_encoder_layers': kwargs.get('num_encoder_layers', 1),
              'num_decoder_layers': kwargs.get('num_decoder_layers', 4),
              'dim_feedforward': kwargs.get('dim_feedforward', 1024),
              'dropout': kwargs.get('dropout', 0.1),
@@ -233,3 +233,7 @@ class CFGReconstruction(nn.Module):
             jitter = jitter * feature_norms * scale
             feature_tokens = feature_tokens + jitter
         return feature_tokens
+    
+    
+    
+    
