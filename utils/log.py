@@ -221,7 +221,7 @@ def save_metrics_to_csv(metrics, csv_filename):
 
 def wandb_init(config):
     log_config = extract_experiment_summary(config)
-    wandb.init(name=f'{config.DEFAULT.exp_name}', project=config.TRAIN.wandb.project_name, config=log_config)   
+    wandb.init(name=config.DEFAULT.exp_name, project=config.TRAIN.wandb.project_name, config=log_config, group=config.DEFAULT.exp_name.split('-')[1])   
         
 def extract_experiment_summary(config):
     """
