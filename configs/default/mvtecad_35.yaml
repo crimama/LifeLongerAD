@@ -5,7 +5,7 @@ DEFAULT:
 
 DATASET:
   datadir: ../Data
-  batch_size: 32
+  batch_size: 2
   test_batch_size: 16
   num_workers: 0
   dataset_name: MVTecAD  # [AnomalyDataset,MVTecAD]
