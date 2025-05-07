@@ -8,18 +8,20 @@ import pandas as pd
 import torch
 import torch.nn as nn 
 import torch.nn.functional as F 
+from datasets.mvtecad import class_label_mapping
 from collections import OrderedDict
 from cosine_annealing_warmup import CosineAnnealingWarmupRestarts
 
 from utils.metrics import MetricCalculator
 from utils.log import AverageMeter,metric_logging,DriftMonitor
+from CL import CL_Transformer
 import warnings
 warnings.filterwarnings('ignore')
 
 _logger = logging.getLogger('train')
     
 
-def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_interval: int, epoch, epochs, savedir, cfg, drift_monitor) -> dict:
+def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_interval: int, epoch, epochs, savedir, cfg, drift_monitor, cl_manager) -> dict:
     
     def collect_gradients(cfg, model, all_gradients, epoch, step):
         if ((cfg.CONTINUAL.online and (step % 10 == 0)) or (not cfg.CONTINUAL.online and ((epoch) % 2 == 0) and (step % 4 == 0))):
@@ -105,6 +107,8 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
         data_time_m.update(time.time() - end)
         
         # Training 
+        cl_manager.save_old_tasks_weights() # 가중치 저장
+        
         outputs = model(Input) 
         loss = model.criterion(outputs, Input)
         optimizer.zero_grad()
@@ -115,9 +119,10 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
         feature_losses_m.update(loss['feature_loss'])
         svd_losses_m.update(loss['svd_loss'])
         
-        #* collect_gradients(cfg, model, all_gradients, epoch, step)
-        drift_monitor.update(outputs['feature_rec'][0])
+        cl_manager.apply_mask_on_grad() # 그래디언트 마스크 적용
         optimizer.step()
+        cl_manager.calculate_importance() # 중요도 계산
+        cl_manager.recover_old_tasks_weights() # 이전 작업 가중치 복구
         
         batch_time_m.update(time.time() - end)        
         # Logging 
@@ -180,10 +185,28 @@ def fit(
     epochs: int, use_wandb: bool, log_interval: int, eval_interval: int, seed: int = None, savedir: str = None
     ,cfg=None):
     print(savedir)    
+    
+    # Set for continual learning 
+    model.train()
+    model = model.cuda()
+    task_labels = [] 
+    for k,v in loader_dict.items():
+        temp = [class_label_mapping[k_] for k_ in k]
+        task_labels.append(temp)
+        
+    ## 희소성 설정 정의
+    sparsity_config = cfg.CONTINUAL.method.params        
+    cl_manager = CL_Transformer(model, accelerator.device, sparsity_config, replace_percentage=0.2)
+    cl_manager.set_init_network_weight()
+    
     epoch_time_m = AverageMeter()
     end = time.time() 
     
     for n_task, (current_class_name, class_loader_dict) in enumerate(loader_dict.items()):
+        
+        # SCL
+        cl_manager.reset_importance() # 새 작업 시작 시 중요도 리셋
+        
         best_score = 0.0
         if (n_task == 0) or (cfg.CONTINUAL.continual==False):
             drift_monitor = DriftMonitor(log_dir=os.path.join(savedir,'DriftMonitor.log'))
@@ -219,7 +242,8 @@ def fit(
                     epochs       = epochs,
                     savedir      = savedir, 
                     cfg          = cfg,
-                    drift_monitor= drift_monitor 
+                    drift_monitor= drift_monitor,
+                    cl_manager   = cl_manager
                 )
              
             if scheduler:
@@ -227,6 +251,10 @@ def fit(
                 
                 epoch_time_m.update(time.time() - end)
                 end = time.time()
+                
+            if epoch < epochs -1:
+                cl_manager.drop()
+                cl_manager.grow()
                 
             if (epoch%2 == 0) or (epoch%199 == 0): 
                 test_metrics = test(
@@ -254,8 +282,11 @@ def fit(
     
         if cfg.CONTINUAL.continual:
             # Continual method 
-            _logger.info('Continual Learning consolidate')
-            # model.consolidate(trainloader)
+            _logger.info('Continual Learning consolidate')            
+            
+            # prepare evaluation 
+            cl_manager.save_current_mask()
+            cl_manager.set_evaluation_mask()
             
             # Continual evaluation 
             num_start = 0 
@@ -283,6 +314,8 @@ def fit(
                                 dataloader         = testloader,
                                 last               = True
                             )
+            if n_task < len(loader_dict) - 1:
+                cl_manager.prepare_next_task()
         else:
             model  = __import__('models').__dict__[cfg.MODEL.method](
                 backbone    = cfg.MODEL.backbone,

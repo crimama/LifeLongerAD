@@ -3,7 +3,7 @@ import torch
 
 from models.iuf.criterion import * 
 class IUFCriterion:    
-    def __init__(self, config, skip:bool = True):        
+    def __init__(self, config, skip:bool = True, buffer_size:int = 768):        
         '''
             criterion = IUFCriterion(cfg.criterion)
         '''
@@ -16,17 +16,14 @@ class IUFCriterion:
             
         self.criterion_list = [c['name'] for c in config]
         
-        # SVDLoss의 누적 텐서를 저장하기 위한 버퍼 등록
-        # 빈 텐서를 device에 맞게 등록 (CUDA 여부는 추후 device 할당 시 반영됨)
-        # self.register_buffer("concatenated_tensor_0", torch.empty(0))
-        # self.register_buffer("concatenated_tensor_1", torch.empty(0))
-        # self.register_buffer("concatenated_tensor_2", torch.empty(0))
+        # SVDLoss의 누적 텐서를 저장하기 위한 버퍼
         self.concatenated_tensor_0 = torch.empty(0)
         self.concatenated_tensor_1 = torch.empty(0)
         self.concatenated_tensor_2 = torch.empty(0)
 
-        self.skip = skip 
-        
+        self.skip = skip         
+        self.buffer_size = buffer_size 
+            
     def __call__(self, outputs: dict, inputs: dict, skip: bool):
         """
         Args:
@@ -84,12 +81,12 @@ class IUFCriterion:
         self.concatenated_tensor_2 = torch.cat([self.concatenated_tensor_2, feat2], dim=0)
 
         # 누적된 텐서 크기가 일정 임계값(예: 768)을 넘으면 앞부분 일부 제거하여 메모리 관리
-        if self.concatenated_tensor_0.shape[0] > 768:
-            self.concatenated_tensor_0 = self.concatenated_tensor_0[48:]
-        if self.concatenated_tensor_1.shape[0] > 768:
-            self.concatenated_tensor_1 = self.concatenated_tensor_1[48:]
-        if self.concatenated_tensor_2.shape[0] > 768:
-            self.concatenated_tensor_2 = self.concatenated_tensor_2[48:]
+        if self.concatenated_tensor_0.shape[0] > self.buffer_size:
+            self.concatenated_tensor_0 = self.concatenated_tensor_0[-self.buffer_size:]
+        if self.concatenated_tensor_1.shape[0] > self.buffer_size:
+            self.concatenated_tensor_1 = self.concatenated_tensor_1[-self.buffer_size:]
+        if self.concatenated_tensor_2.shape[0] > self.buffer_size:
+            self.concatenated_tensor_2 = self.concatenated_tensor_2[-self.buffer_size:]
 
         # 누적된 텐서를 입력으로 SVD 손실 계산 (SVDLoss는 config에 따라 등록된 criterion)
         return self.SVDLoss(self.concatenated_tensor_0,

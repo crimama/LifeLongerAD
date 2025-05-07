@@ -99,3 +99,18 @@ class CFGCAD(nn.Module):
     def criterion(self, Outputs, Inputs, skip:bool = True):
         loss = self._criterion(Outputs, Inputs, skip)
         return loss
+    
+    
+    def take_layer(self, name,param):
+        if len(param.shape)>1:
+            return True
+        else:
+            return False
+
+    def last_layer(self,name):
+        if ((name in self.layers_names[-1]) or (name in self.layers_names[-2])):
+            return True
+        else:
+            return False
+        
+        
