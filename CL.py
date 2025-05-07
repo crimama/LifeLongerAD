@@ -229,13 +229,9 @@ class CL_Transformer():
                     
                 if name in self.previous_mask:
                     protect = self.previous_mask[name].to(param.device)
-                    param.grad *= (1.0 - protect) 
-                    
-        
-
+                    param.grad *= (1.0 - protect)                     
 
     # --- Importance Calculation ---
-
     def reset_importance(self):
         """Resets importance scores before training a new task."""
         self.weights_importance = {}
@@ -410,7 +406,7 @@ class CL_Transformer():
         print(f"\n--- Preparing for Task {self.current_task + 1} ---")        
         self.create_masks()
         self.initialize_new_task_weights()
-        print(f"--- Ready for Task {self.current_task} ---")
+        print(f"--- Ready for Task {self.current_task + 1} ---")
         return True
     
     def save_current_mask(self):
