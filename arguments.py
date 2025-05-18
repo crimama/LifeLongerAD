@@ -106,7 +106,7 @@ def parser(jupyter:bool = False, default_setting:str = None, model_setting:str =
     cfg.DEFAULT.exp_name = f"{cfg.DEFAULT.exp_name}-Continual_{cfg.CONTINUAL.continual}-online_{cfg.CONTINUAL.online}"
     
     # IUF Config update 
-    if cfg.MODEL.method in ['IUF','UniADBuilder','CFGCAD','RanCAD']:
+    if cfg.MODEL.method in ['IUF','UniADBuilder','CFGCAD','CAD']:
         cfg = iuf_config_update(cfg)
         
     

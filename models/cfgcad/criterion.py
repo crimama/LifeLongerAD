@@ -23,7 +23,9 @@ class IUFCriterion:
 
         self.skip = skip         
         self.buffer_size = buffer_size 
-            
+        self.class_mapping = {}
+        self.next_class_idx = 0
+        
     def __call__(self, outputs: dict, inputs: dict, skip: bool):
         """
         Args:
@@ -34,17 +36,38 @@ class IUFCriterion:
         Returns:
             tuple: (전체 loss, feature_loss, class_loss, svd_loss)
         """
-        feature_loss = self._feature_loss(outputs) if 'FeatureMSELoss' in self.criterion_list else 0 
+        cls_labels = inputs["clslabel"]        
+        
+        # 배치의 각 클래스 라벨에 대해 매핑 확인 및 생성
+        for label in cls_labels.unique():
+            label_item = label.item()
+            if label_item not in self.class_mapping:
+                # 새 클래스 발견 시 매핑 추가
+                self.class_mapping[label.item()] = self.next_class_idx
+                self.next_class_idx += 1
+        
+        # 원래 라벨을 순차적 인덱스로 변환
+        mapped_labels = torch.tensor([self.class_mapping[label.item()] for label in cls_labels], 
+                                    device=cls_labels.device)
+            
+        # 매핑된 라벨로 교체
+        inputs["clslabel"] = mapped_labels
+        
+        feature_loss = self._feature_loss(outputs) 
 
-        svd_loss = self._svd_loss(outputs) *10 if 'SVDLoss' in self.criterion_list else 0 
+        svd_loss = self._svd_loss(outputs) * 10 
+        
+        # CLS 토큰을 이용한 분류 손실 계산
+        cls_loss = self._ce_loss(outputs, inputs) 
+
 
         # 전체 loss 계산 (skip 플래그에 따라 SVD 손실 가중치 적용)
-        loss = feature_loss + svd_loss 
-
-
-        return {'loss':loss,
-                'feature_loss':feature_loss.item(),
-                'svd_loss':svd_loss.item() 
+        loss = feature_loss + svd_loss + cls_loss                            
+        
+        return {'loss': loss,
+                'feature_loss': feature_loss.item() if isinstance(feature_loss, torch.Tensor) else feature_loss,
+                'svd_loss': svd_loss.item() if isinstance(svd_loss, torch.Tensor) else svd_loss,
+                'cls_loss': cls_loss.item() if isinstance(cls_loss, torch.Tensor) else cls_loss
                 }
 
     def _feature_loss(self, outputs: dict):
@@ -53,8 +76,8 @@ class IUFCriterion:
 
     def _ce_loss(self, outputs: dict, inputs: dict):
         """Cross Entropy 손실 계산 (입력 clslabel을 device에 맞게 변환)"""
-        cls_label = inputs["clslabel"].to(outputs["class_out"].device)
-        return self.CELoss(outputs["class_out"], cls_label)
+        cls_label = inputs["clslabel"].to(outputs["cls_logits"].device)
+        return self.CELoss(outputs["cls_logits"], cls_label)
 
     def _svd_loss(self, outputs: dict):
         """누적된 중간 디코더 특징을 이용한 SVD 손실 계산
@@ -118,6 +141,17 @@ class ImageMSELoss(nn.Module):
         image = input["image"]
         image_rec = input["image_rec"]
         return self.criterion_mse(image, image_rec)
+
+
+class ClassificationLoss(nn.Module):
+    """CLS 토큰을 사용한 분류 손실"""
+    def __init__(self, weight=1.0):
+        super().__init__()
+        self.criterion_ce = nn.CrossEntropyLoss()
+        self.weight = weight
+        
+    def forward(self, logits, targets):
+        return self.criterion_ce(logits, targets) * self.weight
 
 
 class CELoss(nn.CrossEntropyLoss):
