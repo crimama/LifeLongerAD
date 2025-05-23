@@ -110,7 +110,7 @@ def run(cfg):
         wandb_init(cfg)
                 
     
-    if cfg.MODEL.method in ['IUF','CFIR','ProxyCore','SPADE','PatchCore','UniADBuilder',"CFGCAD",'RanCAD']:
+    if cfg.MODEL.method in ['IUF','CFIR','ProxyCore','SPADE','PatchCore','UniADBuilder',"CFGCAD",'CAD','LANGCAD','SimpleNet']:
         TRAINER = __import__(f'train.train_{cfg.MODEL.method.lower()}', fromlist=f'train_{cfg.MODEL.method.lower()}').fit
         
     else: 
