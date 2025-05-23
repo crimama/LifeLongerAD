@@ -60,6 +60,7 @@ class MVTecAD(Dataset):
         self.img_dirs = self.df[self.df['train/test'] == train_mode][0].values # column 0 : img_dirs 
         self.labels = self.df[self.df['train/test'] == train_mode]['anomaly'].values 
         
+        
         # ground truth 
         self.gt_transform = gt_transform 
 

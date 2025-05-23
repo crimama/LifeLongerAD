@@ -18,9 +18,6 @@ class IUFCriterion:
         
         # SVDLoss의 누적 텐서를 저장하기 위한 버퍼 등록
         # 빈 텐서를 device에 맞게 등록 (CUDA 여부는 추후 device 할당 시 반영됨)
-        # self.register_buffer("concatenated_tensor_0", torch.empty(0))
-        # self.register_buffer("concatenated_tensor_1", torch.empty(0))
-        # self.register_buffer("concatenated_tensor_2", torch.empty(0))
         self.concatenated_tensor_0 = torch.empty(0)
         self.concatenated_tensor_1 = torch.empty(0)
         self.concatenated_tensor_2 = torch.empty(0)
@@ -36,17 +33,41 @@ class IUFCriterion:
 
         Returns:
             tuple: (전체 loss, feature_loss, class_loss, svd_loss)
-        """
-        feature_loss = self._feature_loss(outputs) if 'FeatureMSELoss' in self.criterion_list else 0 
+        """        
+    
+        # 클래스 라벨 가져오기
+        cls_labels = inputs["clslabel"]
+        
+        # 클래스 매핑 딕셔너리가 없으면 초기화
+        if not hasattr(self, 'class_mapping'):
+            self.class_mapping = {}
+            self.next_class_idx = 0
+        
+        # 배치의 각 클래스 라벨에 대해 매핑 확인 및 생성
+        for label in cls_labels.unique():
+            label_item = label.item()
+            if label_item not in self.class_mapping:
+                # 새 클래스 발견 시 매핑 추가
+                self.class_mapping[label_item] = self.next_class_idx
+                self.next_class_idx += 1
+        
+        # 원래 라벨을 순차적 인덱스로 변환
+        mapped_labels = torch.tensor([self.class_mapping[label.item()] for label in cls_labels], 
+                                    device=cls_labels.device)
+            
+        # 매핑된 라벨로 교체
+        inputs["clslabel"] = mapped_labels
         
 
-        svd_loss = self._svd_loss(outputs) if 'SVDLoss' in self.criterion_list else 0 
+        feature_loss = self._feature_loss(outputs) 
+
+        svd_loss = self._svd_loss(outputs) * 10     
         
-        class_loss = self._ce_loss(outputs, inputs) if 'CELoss' in self.criterion_list else 0 
+        class_loss = self._ce_loss(outputs, inputs) * 0.1   
         
 
         # 전체 loss 계산 (skip 플래그에 따라 SVD 손실 가중치 적용)
-        loss = feature_loss + class_loss
+        loss = feature_loss + class_loss + svd_loss
         if skip:
             loss += 10 * svd_loss
 
@@ -62,7 +83,7 @@ class IUFCriterion:
 
     def _ce_loss(self, outputs: dict, inputs: dict):
         """Cross Entropy 손실 계산 (입력 clslabel을 device에 맞게 변환)"""
-        cls_label = inputs["clslabel"].to(outputs["class_out"].device)
+        cls_label = inputs["clslabel"].to(outputs["cls_logits"].device)
         return self.CELoss(outputs["class_out"], cls_label)
 
     def _svd_loss(self, outputs: dict):

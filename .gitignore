@@ -142,3 +142,12 @@ anomalib/*
 anomalib/data/__pycache__/__init__.cpython-38.pyc
 *.pyc
 anomalib/data/__pycache__/__init__.cpython-38.pyc
+train/train_langcad.py
+models/langcad/sampler.py
+models/langcad/model.py
+models/langcad/cvit.py
+models/langcad/common.py
+models/iuf/criterion.py
+train/train_cfir.py
+train/train_cfir.py
+configs/model/LANGCAD.yaml

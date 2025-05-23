@@ -5,8 +5,8 @@ DEFAULT:
 
 DATASET:
   datadir: ../Data
-  batch_size: 2
-  test_batch_size: 16
+  batch_size: 64
+  test_batch_size: 32
   num_workers: 0
   dataset_name: MVTecAD  # [AnomalyDataset,MVTecAD]
   aug_info: 
@@ -61,7 +61,7 @@ CONTINUAL:
   continual : True
   online: false
   method: 
-    name: EMPTY
+    name: EMPTY  
 
 SCHEDULER: 
   name: null

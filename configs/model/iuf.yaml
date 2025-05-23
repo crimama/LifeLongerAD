@@ -48,7 +48,7 @@ MODEL:
             outstrides: [16]
         - name: reconstruction
           prev: neck
-          type: models.iuf.reconstructions.CFGReconstruction
+          type: models.iuf.reconstructions.UniAD
           kwargs: 
             pos_embed_type: learned
             hidden_dim: 256

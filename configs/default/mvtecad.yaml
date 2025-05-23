@@ -16,26 +16,21 @@ DATASET:
     anomaly_ratio: 0.0
     baseline: True
   class_names:
-    -
-      - grid
-      - carpet
-      - cable
-    -     
-      - zipper
-      - wood
-      - tile
-    - 
-      - metal_nut
-      - transistor
-      - bottle
-    - 
-      - leather
-      - pill
-      - hazelnut
-    -     
-      - toothbrush
-      - capsule
-      - screw
+    - grid
+    - carpet
+    - cable     
+    - zipper
+    - wood
+    - tile
+    - metal_nut
+    - transistor
+    - bottle
+    - leather
+    - pill
+    - hazelnut
+    - toothbrush
+    - capsule
+    - screw
 
 
 OPTIMIZER:
@@ -53,7 +48,7 @@ TRAIN:
   log_interval: 100
   eval_interval: 1
   wandb:
-    use: true
+    use: false
     project_name: CFGCAD
     
     

@@ -49,7 +49,7 @@ do
     if [ "$c" = "true" ]; then
         continual_method='DST'
     else
-        continual_method="no"
+        continual_method="EMPTY"
     fi
 
     for cm in $continual_method
@@ -61,9 +61,10 @@ do
                     CUDA_VISIBLE_DEVICES=$gpu_id python main.py \
                         default_setting=./configs/default/$d.yaml \
                         model_setting=./configs/model/$m.yaml \
-                        DEFAULT.exp_name=sparse23_$cm-$exp \
+                        DEFAULT.exp_name=sparse18_srati09_$cm-$exp \
                         CONTINUAL.continual=$c \
                         CONTINUAL.method.name=$cm \
+                        CONTINUAL.method.params.default_sparsity=0.9 \
                         TRAIN.epochs=200 \
                         TRAIN.wandb.use=true
             done 

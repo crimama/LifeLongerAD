@@ -1,0 +1,50 @@
+MODEL:
+  method: SimpleNet
+  backbone: vit
+  params:
+    backbone_name: wide_resnet50_2
+    layers_to_extract_from:        # 특징 추출에 사용될 레이어 이름 목록
+      - "layer2"
+      - "layer3"
+    pretrain_embed_dimension: 1536 # 사전 학습 임베딩 차원
+    target_embed_dimension: 1536   # 목표 임베딩 차원
+    patchsize: 3                   # 패치 크기
+    patchstride: 1                 # 패치 스트라이드
+    dsc_layers: 2                  # Discriminator 레이어 수
+    dsc_hidden: 1024               # Discriminator 은닉층 크기
+    dsc_margin: 0.5                # Discriminator 마진 값
+    dsc_lr: 0.0002                 # Discriminator 학습률
+    noise_std: 0.015               # 노이즈 표준 편차
+    train_backbone: false          # 백본 학습 여부
+    pre_proj: 1                    # 사전 프로젝션 레이어 수
+    proj_layer_type: 0             # 프로젝션 레이어 유형
+    device: cuda
+
+DATASET:
+  batch_size: 64
+  test_batch_size: 32
+  num_workers: 4
+  aug_info: 
+    - CenterCrop
+  img_size: 224
+
+
+OPTIMIZER:
+  opt_name: AdamW
+  lr: 0.0001
+  params:
+    betas: 
+    - 0.5
+    - 0.999
+
+TRAIN:
+  epochs: 160
+  mixed_precision: 'fp16'
+    
+    
+
+
+SCHEDULER: 
+  name: null
+  params: null
+

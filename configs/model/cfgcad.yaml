@@ -2,8 +2,13 @@ OPTIMIZER:
   opt_name: AdamW
   lr: 0.001
   params:
-    betas: [0.9, 0.999]
-    weight_decay: 0.0001
+    betas:
+    - 0.9
+    - 0.999
+    weight_decay: 0.01
+
+DATASET:
+  batch_size: 64
 
 TRAIN:
   epochs: 100
@@ -17,6 +22,18 @@ SCHEDULER:
     step_size_up: 20
     mode: exp_range
     gamma: 0.995
+
+CONTINUAL:
+  continual: True
+  method: 
+    name: DST # CL 비활성화하려면 'DST'를 'None'으로 변경하세요
+    params:
+      default_sparsity: 0.8
+      layer_specific:
+        reconstruction.rec_head: 0.7
+      specific_nodes_ratio: 0.1
+      selected_nodes_ratio: 0.5
+
 
 MODEL:
   method : CFGCAD
@@ -54,8 +71,8 @@ MODEL:
             pos_embed_type: learned
             hidden_dim: 256
             nhead: 8
-            num_encoder_layers: 4
-            num_decoder_layers: 4
+            num_encoder_layers: 0
+            num_decoder_layers: 8
             dim_feedforward: 1024
             dropout: 0.1
             activation: relu
@@ -65,7 +82,7 @@ MODEL:
               prob: 1.0
             neighbor_mask:
               neighbor_size: [7,7]
-              mask: [False, False, False] # whether use mask in [enc, dec1, dec2]
+              mask: [enc, dec1, dec2] # whether use mask in [enc, dec1, dec2]
             save_recon:
               save_dir: result_recon
             initializer:
@@ -74,4 +91,5 @@ MODEL:
             uncond_prob: 0.1
             guidance_scale: 7.5
             feature_dim: 256 
-    
+            use_cls_token: True
+            num_classes: 3

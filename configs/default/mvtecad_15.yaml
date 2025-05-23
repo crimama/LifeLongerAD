@@ -16,6 +16,9 @@ DATASET:
     anomaly_ratio: 0.0
     baseline: True
   class_names:
+    - capsule
+    - toothbrush
+    - screw
     - grid
     - carpet
     - cable
@@ -28,9 +31,6 @@ DATASET:
     - leather
     - pill
     - hazelnut
-    - toothbrush
-    - capsule
-    - screw
 
 
 OPTIMIZER:
