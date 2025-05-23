@@ -45,7 +45,7 @@ def compute_continual_result(result: pd.DataFrame,
             # 현재 클래스에 해당하는 데이터 추출 (불필요한 열 제거)
             temp = result[result['class_name'] == cln].drop(columns=['task', 'epoch', 'epoch_time'])
             
-            # 마지막 결과 행 추출 (last == 1)
+            # 마지막 결과 행 추출 (last == 1)            
             last_value = temp[temp['last'] == 1].iloc[-1]
             
             # Average Forgetting (AF) == Forgetting Measure: 
@@ -147,6 +147,38 @@ class MetricCalculator:
         fpr, tpr, thr = roc_curve(y_trues,y_preds)
         auroc = auc(fpr,tpr)
         return auroc
+    
+    def _iou(self, y_preds:np.ndarray, y_trues:np.ndarray):
+        y_preds, y_trues = y_preds.flatten(), y_trues.flatten()
+        # Find optimal threshold using ROC curve
+        fpr, tpr, thresholds = roc_curve(y_trues, y_preds)
+        # Calculate Youden's J statistic to find optimal threshold
+        j_scores = tpr - fpr
+        optimal_idx = np.argmax(j_scores)
+        optimal_threshold = thresholds[optimal_idx]
+        
+        # Binarize predictions using optimal threshold
+        y_preds_binary = np.where(y_preds > optimal_threshold, 1, 0)
+        
+        # Calculate intersection and union
+        intersection = np.logical_and(y_preds_binary, y_trues).sum()
+        union = np.logical_or(y_preds_binary, y_trues).sum()
+        
+        # Calculate IoU
+        iou = intersection / (union + 1e-8)  # Add small epsilon to avoid division by zero
+        return iou
+
+    def _f1_max(self, y_preds:np.ndarray, y_trues:np.ndarray):
+        y_preds, y_trues = y_preds.flatten(), y_trues.flatten()
+        precisions, recalls, thresholds = precision_recall_curve(y_trues, y_preds)
+        # Calculate F1 score for each threshold
+        f1_scores = 2 * (precisions[:-1] * recalls[:-1]) / (precisions[:-1] + recalls[:-1] + 1e-8)
+        # Find the index of the maximum F1 score
+        max_f1_idx = np.argmax(f1_scores)
+        # Get the threshold and maximum F1 score
+        optimal_threshold = thresholds[max_f1_idx]
+        f1_max = f1_scores[max_f1_idx]
+        return f1_max
     
     def _aupro(self, y_preds:np.ndarray, y_trues:np.ndarray):
         fprs, pros = calculate_aupro(y_preds, y_trues)

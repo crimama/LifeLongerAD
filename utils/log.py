@@ -145,7 +145,7 @@ def metric_logging(savedir, use_wandb=None,
         metrics.update([('lr',round(optimizer.param_groups[0]['lr'],5))])
         
     if train_metrics is not None:
-        metrics.update([('train_' + k, round(v,4)) for k, v in train_metrics.items()])
+        metrics.update([('train_metrics', train_metrics)])
         
     if class_name is not None:
         metrics.update([('class_name', class_name)])
@@ -154,7 +154,6 @@ def metric_logging(savedir, use_wandb=None,
         metrics.update([('GT_class_name', current_class_name)])
         
     metrics.update([
-                    # ('test_' + k, round(v,4)) for k, v in test_metrics.items()
                     ('test_metrics',test_metrics)
                     ])
     if epoch_time_m is not None:
@@ -167,45 +166,80 @@ def metric_logging(savedir, use_wandb=None,
         else:
             metrics.update([(key, value)])
     
-    # with open(os.path.join(savedir, 'result.txt'),  'a') as f:
-    #     f.write(json.dumps(metrics) + "\n")
-    
+    # 결과 저장
     save_metrics_to_csv(dict(metrics), os.path.join(savedir,'results/result_log.csv'))
     
-    
-    if use_wandb:
-        wandb.log(
-                {
-                'Train/Epoch': epoch,  
-                'Test/class_name' : list(class_name),
-                'Test/GT_class_name' : list(current_class_name), 
-                'Test/img_level_auroc': test_metrics['img_level']['auroc'],
-                'Test/img_level_average_precision': test_metrics['img_level']['average_precision'],
-                'Test/pix_level_auroc': test_metrics['pix_level']['auroc'],
-                'Test/pix_level_average_precision': test_metrics['pix_level']['average_precision'],                
-                'Time/Test Batch Average (s)' : epoch_time_m.avg
-            }
-        )
+    # wandb 로깅
+    if use_wandb and test_metrics is not None:
+        # Helper function to convert ListConfig to regular list
+        def convert_listconfig(obj):
+            if hasattr(obj, '__class__') and obj.__class__.__name__ == 'ListConfig':
+                return list(obj)
+            elif isinstance(obj, (list, tuple)):
+                return list(obj)
+            return obj
+            
+        wandb_metrics = {
+            'Train/Epoch': epoch,
+            'Test/class_name': convert_listconfig(class_name),
+            'Test/GT_class_name': convert_listconfig(current_class_name),
+            'Time/Test Batch Average (s)': epoch_time_m.avg if epoch_time_m is not None else 0
+        }
+        
+        # img_level 메트릭 동적 추가
+        if 'img_level' in test_metrics:
+            for metric_name, metric_value in test_metrics['img_level'].items():
+                wandb_metrics[f'Test/img_level_{metric_name}'] = convert_listconfig(metric_value)
+        
+        # pix_level 메트릭 동적 추가
+        if 'pix_level' in test_metrics:
+            for metric_name, metric_value in test_metrics['pix_level'].items():
+                wandb_metrics[f'Test/pix_level_{metric_name}'] = convert_listconfig(metric_value)
+        
+        # train_metrics가 있으면 추가
+        if train_metrics is not None:
+            for metric_name, metric_value in train_metrics.items():
+                wandb_metrics[f'Train/{metric_name}'] = convert_listconfig(metric_value)
+        
+        wandb.log(wandb_metrics)
         
         
 def save_metrics_to_csv(metrics, csv_filename):
     import csv 
-    # 딕셔너리 데이터를 평평하게 변환
+    # 기본 메타데이터 필드 
     flat_data = {
-        "task": metrics['task'],
-        "epoch": metrics['epoch'],
-        "class_name": metrics['class_name'],
-        "GT_class_name": metrics['GT_class_name'],
-        "img_level_auroc": metrics['test_metrics']['img_level']['auroc'],
-        "img_level_average_precision": metrics['test_metrics']['img_level']['average_precision'],
-        "pix_level_auroc": metrics['test_metrics']['pix_level']['auroc'],
-        "pix_level_average_precision": metrics['test_metrics']['pix_level']['average_precision'],
-        "epoch_time": metrics['epoch_time'],
-        "last" : metrics['last']
+        "task": metrics.get('task', 0),
+        "epoch": metrics.get('epoch', 0),
+        "class_name": metrics.get('class_name', ''),
+        "GT_class_name": metrics.get('GT_class_name', ''),
+        "epoch_time": metrics.get('epoch_time', 0),
+        "last": metrics.get('last', False)
     }
+    
+    # 동적으로 test_metrics의 img_level과 pix_level 메트릭 추가
+    if 'test_metrics' in metrics:
+        test_metrics = metrics['test_metrics']
+        
+        # img_level 메트릭 추가
+        if 'img_level' in test_metrics:
+            for metric_name, metric_value in test_metrics['img_level'].items():
+                flat_data[f"img_level_{metric_name}"] = metric_value
+                
+        # pix_level 메트릭 추가
+        if 'pix_level' in test_metrics:
+            for metric_name, metric_value in test_metrics['pix_level'].items():
+                flat_data[f"pix_level_{metric_name}"] = metric_value
+    
+    # train_metrics가 있는 경우 추가
+    if 'train_metrics' in metrics:
+        for metric_name, metric_value in metrics['train_metrics'].items():
+            flat_data[f"train_{metric_name}"] = metric_value
 
     # 파일이 존재하는지 확인해서 존재하지 않으면 헤더를 추가
     file_exists = os.path.isfile(csv_filename)
+    
+    # 파일 경로의 디렉토리가 존재하지 않으면 생성
+    os.makedirs(os.path.dirname(csv_filename), exist_ok=True)
 
     # CSV 파일에 추가 모드로 데이터 저장
     with open(csv_filename, mode='a', newline='') as file:
