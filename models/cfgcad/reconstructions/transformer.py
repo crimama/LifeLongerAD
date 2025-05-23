@@ -28,14 +28,10 @@ class Transformer(nn.Module):
         activation="relu",
         normalize_before=False,
         return_intermediate_dec=False,
-        use_cls_token=True,
-        num_classes=0,
     ):
         super().__init__()
         self.feature_size = feature_size
         self.neighbor_mask = neighbor_mask
-        self.use_cls_token = use_cls_token
-        self.num_classes = num_classes
 
         encoder_layer = TransformerEncoderLayer(
             hidden_dim, nhead, dim_feedforward, dropout, activation, normalize_before
@@ -64,16 +60,6 @@ class Transformer(nn.Module):
 
         self.hidden_dim = hidden_dim
         self.nhead = nhead
-        
-        # CLS token embedding
-        if self.use_cls_token:
-            self.cls_embedding = nn.Parameter(torch.randn(1, 1, hidden_dim))
-            
-            # Classification head for CLS token
-            if num_classes > 0:
-                self.classification_head = ExpandableClassifier(hidden_dim, num_classes)
-            else:
-                self.classification_head = None
 
     def generate_mask(self, feature_size, neighbor_size):
         """
@@ -116,72 +102,18 @@ class Transformer(nn.Module):
             mask_dec2 = mask if self.neighbor_mask.mask[2] else None
         else:
             mask_enc = mask_dec1 = mask_dec2 = None
-            
-        # CLS 토큰이 있는 경우, 마스크 조정 필요
-        if self.use_cls_token:
-            if mask_enc is not None:
-                # CLS 토큰은 모든 토큰을 볼 수 있고, 모든 토큰은 CLS를 볼 수 있게 설정
-                seq_len = mask_enc.size(0)
-                
-                # CLS 토큰에 대한 행과 열 추가
-                cls_row = torch.zeros(1, seq_len, device=mask_enc.device, dtype=mask_enc.dtype)
-                cls_col = torch.zeros(seq_len + 1, 1, device=mask_enc.device, dtype=mask_enc.dtype)
-                
-                # 마스크 확장
-                mask_enc_expanded = torch.cat([cls_row, mask_enc], dim=0)
-                mask_enc_expanded = torch.cat([cls_col, mask_enc_expanded], dim=1)
-                mask_enc = mask_enc_expanded
-                
-                # decoder 마스크도 동일하게 조정
-                if mask_dec1 is not None:
-                    mask_dec1_expanded = torch.cat([cls_row, mask_dec1], dim=0)
-                    mask_dec1_expanded = torch.cat([cls_col, mask_dec1_expanded], dim=1)
-                    mask_dec1 = mask_dec1_expanded
-                
-                if mask_dec2 is not None:
-                    mask_dec2_expanded = torch.cat([cls_row, mask_dec2], dim=0)
-                    mask_dec2_expanded = torch.cat([cls_col, mask_dec2_expanded], dim=1)
-                    mask_dec2 = mask_dec2_expanded
 
         output_encoder = self.encoder(
             src, mask=mask_enc, pos=pos_embed
         )  # (H X W) x B x C
-        
-        # CLS 토큰이 있는 경우, decoder 입력에 추가
-        if self.use_cls_token:
-            cls_tokens = self.cls_embedding.expand(-1, batch_size, -1)
-                            
-        
         output_decoder = self.decoder(
             output_encoder,
-            cls_tokens,
             tgt_mask=mask_dec1,
             memory_mask=mask_dec2,
             pos=pos_embed,
         )  # (H X W) x B x C
-        
-        # 분류 결과 계산
-        if self.use_cls_token and self.classification_head is not None:
-            # CLS 토큰은 첫 번째 위치에 있음
-            cls_token = output_decoder[0] if not self.decoder.return_intermediate else output_decoder[-1, 0]
-            class_logits = self.classification_head(cls_token)
-            return output_decoder, output_encoder, class_logits
-        
-        return output_decoder, output_encoder, None 
-        
-    def expand_classification_head(self, num_new_classes):
-        """
-        Expand the classification head with new classes for continual learning
-        """
-        if not self.use_cls_token:
-            raise ValueError("Cannot expand classification head without CLS token")
-            
-        if self.classification_head is None:
-            self.classification_head = ExpandableClassifier(self.hidden_dim, num_new_classes)
-        else:
-            self.classification_head.expand(num_new_classes)
-            
-        self.num_classes += num_new_classes
+
+        return output_decoder, output_encoder
 
 
 class TransformerEncoder(nn.Module):
@@ -225,22 +157,19 @@ class TransformerDecoder(nn.Module):
     def forward(
         self,
         memory,
-        cls_token: Optional[Tensor] = None,
         tgt_mask: Optional[Tensor] = None,
         memory_mask: Optional[Tensor] = None,
         tgt_key_padding_mask: Optional[Tensor] = None,
         memory_key_padding_mask: Optional[Tensor] = None,
         pos: Optional[Tensor] = None,
     ):
-        output = memory        
+        output = memory
+
         intermediate = []
 
-        for i,layer in enumerate(self.layers):            
-            
-
-            output, cls_token = layer(
+        for layer in self.layers:
+            output = layer(
                 output,
-                cls_token,
                 memory,
                 tgt_mask=tgt_mask,
                 memory_mask=memory_mask,
@@ -297,7 +226,7 @@ class TransformerEncoderLayer(nn.Module):
         src_mask: Optional[Tensor] = None,
         src_key_padding_mask: Optional[Tensor] = None,
         pos: Optional[Tensor] = None,
-    ):                    
+    ):
         q = k = self.with_pos_embed(src, pos)
         src2 = self.self_attn(
             q, k, value=src, attn_mask=src_mask, key_padding_mask=src_key_padding_mask
@@ -377,7 +306,6 @@ class TransformerDecoderLayer(nn.Module):
     def forward_post(
         self,
         out,
-        cls_token,
         memory,
         tgt_mask: Optional[Tensor] = None,
         memory_mask: Optional[Tensor] = None,
@@ -388,22 +316,10 @@ class TransformerDecoderLayer(nn.Module):
         _, batch_size, _ = memory.shape
         tgt = self.learned_embed.weight
         tgt = torch.cat([tgt.unsqueeze(1)] * batch_size, dim=1)  # (H X W) x B x C
-        
-        # CLS 토큰 처리
-        if cls_token is not None:                          
-            cls_pos_embed = torch.zeros_like(pos[0:1])
-            tgt = torch.cat([cls_token, tgt], dim=0)
-            pos_with_cls = torch.cat([cls_pos_embed, pos], dim=0)
-            
-            # memory에도 CLS 토큰 추가 (memory와 tgt의 길이를 맞추기 위함)
-            if memory.shape[0] != tgt.shape[0]:
-                # memory에 CLS 토큰 위치에 해당하는 임베딩 추가
-                cls_memory = cls_token.clone()  # CLS 토큰을 복제하여 사용
-                memory = torch.cat([cls_memory, memory], dim=0)
 
         tgt2 = self.self_attn(
-            query=self.with_pos_embed(tgt, pos_with_cls if cls_token is not None else pos),
-            key=self.with_pos_embed(memory, pos_with_cls if cls_token is not None else pos),
+            query=self.with_pos_embed(tgt, pos),
+            key=self.with_pos_embed(memory, pos),
             value=memory,
             attn_mask=tgt_mask,
             key_padding_mask=tgt_key_padding_mask,
@@ -411,9 +327,8 @@ class TransformerDecoderLayer(nn.Module):
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
 
-        
         tgt2 = self.multihead_attn(
-            query=self.with_pos_embed(tgt, pos_with_cls if cls_token is not None else pos),
+            query=self.with_pos_embed(tgt, pos),
             key=self.with_pos_embed(out, pos),
             value=out,
             attn_mask=memory_mask,
@@ -425,7 +340,7 @@ class TransformerDecoderLayer(nn.Module):
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
         tgt = tgt + self.dropout3(tgt2)
         tgt = self.norm3(tgt)
-        return tgt[1:], cls_token
+        return tgt
 
     def forward_pre(
         self,
@@ -469,7 +384,6 @@ class TransformerDecoderLayer(nn.Module):
     def forward(
         self,
         out,
-        cls_token,
         memory,
         tgt_mask: Optional[Tensor] = None,
         memory_mask: Optional[Tensor] = None,
@@ -489,7 +403,6 @@ class TransformerDecoderLayer(nn.Module):
             )
         return self.forward_post(
             out,
-            cls_token,
             memory,
             tgt_mask,
             memory_mask,
@@ -608,71 +521,3 @@ def build_position_embedding(pos_embed_type, feature_size, hidden_dim):
     else:
         raise ValueError(f"not supported {pos_embed_type}")
     return pos_embed
-
-
-class ExpandableClassifier(nn.Module):
-    """
-    Expandable classification head for continual learning
-    """
-    def __init__(self, hidden_dim, num_classes):
-        super().__init__()
-        self.hidden_dim = hidden_dim
-        self.num_classes = num_classes
-        
-        # Layer normalization before classification
-        self.layer_norm = nn.LayerNorm(hidden_dim)        
-        
-        
-    def forward(self, x):
-        """
-        Forward pass through the classification head
-        Args:
-            x: CLS token representation [B x C]
-        Returns:
-            logits: Classification logits [B x num_classes]
-        """
-        x = self.layer_norm(x)
-        
-        # Compute logits for each class
-        logits = []
-        for class_embedding in self.class_embeddings:
-            logits.append(class_embedding(x))
-            
-        # Concatenate class logits
-        logits = torch.cat(logits, dim=1)
-        return logits
-        
-    def expand(self, num_new_classes):
-        """
-        Expand the classifier with new classes
-        Args:
-            num_new_classes: Number of new classes to add
-        """
-        # Add new class embeddings
-        for _ in range(num_new_classes):
-            self.class_embeddings.append(nn.Linear(self.hidden_dim, 1))
-            
-        self.num_classes += num_new_classes
-        
-    def set_initial_task(self, num_classes):
-        """
-        Set up the classifier for the first task in continual learning
-        Args:
-            num_classes: Number of classes for the initial task
-        """
-        # Reset existing class embeddings
-        self.class_embeddings = nn.ModuleList([nn.Linear(self.hidden_dim, 1) for _ in range(num_classes)])
-        self.num_classes = num_classes
-        
-    def freeze_old_classes(self, num_old_classes=None):
-        """
-        Freeze parameters of old classes to prevent forgetting
-        Args:
-            num_old_classes: Number of old classes to freeze (None means all existing classes)
-        """
-        if num_old_classes is None:
-            num_old_classes = len(self.class_embeddings) - 1
-            
-        for i in range(num_old_classes):
-            for param in self.class_embeddings[i].parameters():
-                param.requires_grad = False
