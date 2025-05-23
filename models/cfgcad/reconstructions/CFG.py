@@ -10,9 +10,8 @@ import torch.nn.functional as F
 from einops import rearrange
 from ..initializer import initialize_from_cfg
 from torch import Tensor, nn
-from PIL import Image
 
-from .transformer import Transformer, build_position_embedding
+from PIL import Image
 
 
 
@@ -31,7 +30,7 @@ class CFGReconstruction(nn.Module):
         self.feature_jitter = kwargs['feature_jitter']
         self.uncond_prob = kwargs['uncond_prob']
         self.guidance_scale = kwargs['guidance_scale']
-        self.use_cls_token = kwargs['use_cls_token']
+        
 
         # 설정 파일의 kwargs를 사용하여 Transformer 초기화
         transformer_kwargs = {
@@ -45,9 +44,7 @@ class CFGReconstruction(nn.Module):
              'dropout': kwargs.get('dropout', 0.1),
              'activation': kwargs.get('activation', "relu"),
              'normalize_before': kwargs.get('normalize_before', False),
-             'return_intermediate_dec': kwargs.get('return_intermediate_dec', True), # IUF 기본값 사용,             
-             'num_classes': kwargs.get('num_classes', 3),
-             'use_cls_token': kwargs.get('use_cls_token', True),
+             'return_intermediate_dec': kwargs.get('return_intermediate_dec', True) # IUF 기본값 사용
         }
         
         # feature_size 는 H', W' 이므로 계산 필요 (예: num_patches 기반)
@@ -63,8 +60,6 @@ class CFGReconstruction(nn.Module):
             transformer_kwargs['neighbor_mask'] = kwargs['neighbor_mask']
         else:
              transformer_kwargs['neighbor_mask'] = None # 명시적으로 None 설정
-
-        
 
         # --- Transformer 인스턴스 생성 (OASA 없는 버전) ---
         self.transformer = Transformer(**transformer_kwargs)
@@ -110,8 +105,6 @@ class CFGReconstruction(nn.Module):
         
         
     def forward(self, input, task_id=None):
-        # 클래스 라벨 처리: 고유 인덱스를 순차적 인덱스로 매핑
-
         feature_align = input["feature_align"]  # B x C X H x W #? MFCN에서 size 맞춰준 feature
         src, pos_embed = self.forward_pre(feature_align)
         device = feature_align.device
@@ -120,8 +113,7 @@ class CFGReconstruction(nn.Module):
             B = feature_align.shape[0]            
                                     
             #! --- Single pass through Transformer ---
-            output_decoder, _, class_logits = self.transformer(src, pos_embed) # mask 인자 필요시 추가
-            
+            output_decoder, _ = self.transformer(src, pos_embed) # mask 인자 필요시 추가
             middle_decoder_feature=output_decoder[0:3,...]
                
             middle_decoder_feature_rec_0 = rearrange(
@@ -154,13 +146,12 @@ class CFGReconstruction(nn.Module):
                 "middle_decoder_feature_0": middle_decoder_feature_rec_0,
                 "middle_decoder_feature_1": middle_decoder_feature_rec_1,
                 "middle_decoder_feature_2": middle_decoder_feature_rec_2,
-                "cls_logits": class_logits,
             }
             
         else: # Inference                                                                                
             #! --- Task 임베딩을 src에 더하기 ---            
             features_uncond = src
-            rec_tokens, _ , cls_logits= self.transformer(features_uncond, pos_embed) # L, B, C
+            rec_tokens, _ = self.transformer(features_uncond, pos_embed) # L, B, C
             rec_tokens = rec_tokens[3] 
                         
             # --- 출력 shape 변경: L, B, C -> B, L, C ---
