@@ -12,7 +12,7 @@ from ..initializer import initialize_from_cfg
 from torch import Tensor, nn
 
 from PIL import Image
-
+from .transformer import Transformer, build_position_embedding
 
 
 class CFGReconstruction(nn.Module):
@@ -183,3 +183,6 @@ class CFGReconstruction(nn.Module):
             jitter = jitter * feature_norms * scale
             feature_tokens = feature_tokens + jitter
         return feature_tokens
+    
+    
+    
