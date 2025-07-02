@@ -69,8 +69,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
     image_bank = [] 
     for idx, (images, _, _) in enumerate(dataloader):
         image_bank.append(images.detach().cpu())
-        
-    breakpoint()
+            
     model.fit(torch.cat(image_bank))
 
 
@@ -89,8 +88,12 @@ def test(model, dataloader, device,
             score, score_map = model.predict(images)
 
         # Stack Scoring for metrics
-        pix_level.update(score_map,gts.type(torch.int))
-        img_level.update(score, labels.type(torch.int))
+        try:
+            pix_level.update(score_map,gts.type(torch.int))
+            img_level.update(score, labels.type(torch.int))
+        except Exception as e:
+            print(f"Error in metrics update: {e}")
+            breakpoint()
 
     i_results, p_results = img_level.compute(), pix_level.compute()
     _logger.info(f"Current Class name : {current_class_name} Class name : {class_name} Image AUROC: {i_results['auroc']:.3f}| Pixel AUROC: {p_results['auroc']:.3f}")

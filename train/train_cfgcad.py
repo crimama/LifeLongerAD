@@ -32,7 +32,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
             all_gradients.append(step_grad_dict)
     
     def log_training_info(step, accelerator, dataloader, epoch, epochs,
-                      losses_m, feature_losses_m, svd_losses_m,
+                      losses_m, feature_losses_m, svd_losses_m, representation_ortho_losses_m,
                       optimizer, batch_time_m, data_time_m, images, wandb_use:bool = False):
         current_step = (step + 1) // accelerator.gradient_accumulation_steps
         total_steps = len(dataloader) // accelerator.gradient_accumulation_steps
@@ -41,6 +41,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
             'Total Loss: {loss_val:>6.4f} | '
             'Feature Loss: {feature_loss_val:>6.4f} | '            
             'SVD Loss: {svd_loss_val:>6.4f} | '
+            'Rep Ortho Loss: {rep_ortho_loss_val:>6.4f} | '
             'LR: {lr:.3e} | '
             'Time: {batch_time_avg:.3f}s, {rate_avg:>3.2f}/s | '
             'Data: {data_time_avg:.3f}s'.format(
@@ -51,6 +52,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
                 loss_val=losses_m.val,
                 feature_loss_val=feature_losses_m.val,
                 svd_loss_val=svd_losses_m.val,
+                rep_ortho_loss_val=representation_ortho_losses_m.val,
                 lr=optimizer.param_groups[0]['lr'],
                 batch_time_avg=batch_time_m.avg,
                 rate_avg=images[0].size(0) / batch_time_m.avg,
@@ -61,10 +63,11 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
         if wandb_use:
             wandb.log(
                 {
-                'Train/Epoch': epoch,  # 현재 에포크 로깅 (선택 사항)
-                'Train/Total Loss': losses_m.avg, # 평균 손실 로깅
+                'Train/Epoch': epoch,
+                'Train/Total Loss': losses_m.avg,
                 'Train/Feature Loss': feature_losses_m.avg,
                 'Train/SVD Loss': svd_losses_m.avg,
+                'Train/Rep Ortho Loss': representation_ortho_losses_m.avg,
                 'Train/Learning Rate': optimizer.param_groups[0]['lr'],
                 'Time/Train Batch Average (s)': batch_time_m.avg,
                 'Time/Processing Rate (img/s)': images[0].size(0) / batch_time_m.avg,
@@ -72,6 +75,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
                 'Train/Total Loss (val)': losses_m.val,
                 'Train/Feature Loss (val)': feature_losses_m.val,
                 'Train/SVD Loss (val)': svd_losses_m.val,
+                'Train/Rep Ortho Loss (val)': representation_ortho_losses_m.val,
             }
         )
 
@@ -96,6 +100,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
     losses_m = AverageMeter()
     feature_losses_m = AverageMeter()
     svd_losses_m = AverageMeter()
+    representation_ortho_losses_m = AverageMeter()
     
     current_class_name = dataloader.dataset.class_name
     model.train()
@@ -110,7 +115,10 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
         cl_manager.save_old_tasks_weights() # 가중치 저장
         
         outputs = model(Input) 
-        loss = model.criterion(outputs, Input)
+        # Collect features for representation orthogonality
+        cl_manager.collect_features(outputs)
+        
+        loss = model.criterion(outputs, cl_manager, current_task_id=cl_manager.current_task)
         optimizer.zero_grad()
         accelerator.backward(loss['loss'])         
         
@@ -118,6 +126,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
         losses_m.update(loss['loss'].item())
         feature_losses_m.update(loss['feature_loss'])
         svd_losses_m.update(loss['svd_loss'])
+        representation_ortho_losses_m.update(loss.get('representation_ortho_loss', 0.0))
         
         cl_manager.apply_mask_on_grad() # 그래디언트 마스크 적용
         optimizer.step()
@@ -129,7 +138,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
         adjusted_log_interval = log_interval if cfg.CONTINUAL.online else 1
         if (step + 1) % adjusted_log_interval == 0:
             log_training_info(step, accelerator, dataloader, epoch, epochs, 
-                            losses_m ,feature_losses_m ,svd_losses_m,
+                            losses_m, feature_losses_m, svd_losses_m, representation_ortho_losses_m,
                             optimizer, batch_time_m, data_time_m, images, wandb_use=cfg.TRAIN.wandb.use)
             
         # do_online_inference(cfg, step, dataloader, model, accelerator, savedir, epoch, testloader, current_class_name, batch_time_m, optimizer)

@@ -138,6 +138,8 @@ class PatchCore(torch.nn.Module):
         _ = self.forward_modules["feature_aggregator"].eval()
 
         with torch.no_grad():
+            if len(images.shape) == 3: 
+                images = images.unsqueeze(0)                
             features = self.forward_modules["feature_aggregator"](images)
 
         features = [features[layer] for layer in self.layers_to_extract_from]

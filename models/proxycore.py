@@ -290,6 +290,34 @@ class ProxyCore(nn.Module):
         output = self.projection_layer(self.embedding_layer(feat))   
         return output   
         
+    def clear_memory(self):
+        """Clear all cached features and internal states to prevent memory accumulation."""
+        # Clear PatchCore internal states
+        if hasattr(self.core, 'features'):
+            del self.core.features
+        if hasattr(self.core, 'coreset'):
+            del self.core.coreset
+        if hasattr(self.core, 'patch_weight'):
+            del self.core.patch_weight
+        if hasattr(self.core, 'coreset_weight'):
+            del self.core.coreset_weight
+        if hasattr(self.core, 'sampling_weight'):
+            del self.core.sampling_weight
+        if hasattr(self.core, 'sample_indices'):
+            del self.core.sample_indices
+            
+        # Clear anomaly scorer memory bank
+        if hasattr(self.core.anomaly_scorer, 'search_index') and self.core.anomaly_scorer.search_index is not None:
+            self.core.anomaly_scorer.search_index.reset()
+            self.core.anomaly_scorer.search_index = None
+            
+        # Clear criterion if exists
+        if hasattr(self, '_criterion'):
+            del self._criterion
+            
+        # Force garbage collection
+        torch.cuda.empty_cache()
+
 class FeatureDataset(torch.utils.data.Dataset):
     def __init__(self, features, labels=None):
         self.features = features 

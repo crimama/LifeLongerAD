@@ -21,12 +21,12 @@ MODEL:
     device: cuda
 
 DATASET:
-  batch_size: 64
+  batch_size: 4
   test_batch_size: 32
   num_workers: 4
-  aug_info: 
-    - CenterCrop
   img_size: 224
+  # aug_info: 
+  #   - 
 
 
 OPTIMIZER:
@@ -39,10 +39,7 @@ OPTIMIZER:
 
 TRAIN:
   epochs: 160
-  mixed_precision: 'fp16'
-    
-    
-
+  mixed_precision: 'no'    
 
 SCHEDULER: 
   name: null

@@ -62,8 +62,10 @@ def add_augmentation(transform: transforms.Compose, img_size: int, aug_info: lis
         'RandomResizedCrop' : transforms.RandomResizedCrop((img_size, img_size)),
         'RandomHorizontalFlip': transforms.RandomHorizontalFlip(p=0.5),
         'RandomVerticalFlip': transforms.RandomVerticalFlip(p=0.3),
-        'RandomColorJitter' : transforms.RandomApply([get_color_jitter()], p=0.8),
+        'RandomColorJitter' : transforms.RandomApply([get_color_jitter()], p=0.1),
+        'RandomRotation': transforms.RandomApply([transforms.RandomRotation(degrees=15)], p=0.1),
         'GaussianBlur' : GaussianBlur(kernel_size=int(0.1*img_size)),
+        'RandomGaussianBlur': RandomGaussianBlur(kernel_size=int(0.1*img_size), p=0.1),
         'Resize': transforms.Resize((img_size, img_size)),
         'ResizeCrop': ResizeCrop(img_size),
         'PatchCore': None
@@ -94,6 +96,17 @@ class ResizeCrop:
         return self.transform(img)
         
     
+
+class RandomGaussianBlur(object):
+    """Randomly apply Gaussian blur to a single image with given probability"""
+    def __init__(self, kernel_size, p=0.5):
+        self.p = p
+        self.gaussian_blur = GaussianBlur(kernel_size)
+    
+    def __call__(self, img):
+        if torch.rand(1) < self.p:
+            return self.gaussian_blur(img)
+        return img
 
 class GaussianBlur(object):
     """blur a single image on CPU"""

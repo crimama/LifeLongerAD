@@ -1,4 +1,5 @@
 from .efficientnet import *  # noqa F401
+from .vit.model import VisionTransformerBackbone
 
 backbone_info = {
     "efficientnet_b0": {
@@ -42,5 +43,11 @@ backbone_info = {
         "blocks": [2, 8, 14, 30, 44],
         "planes": [32, 40, 72, 200, 576],
         "strides": [2, 4, 8, 16, 32],
+    },
+    "VisionTransformerBackbone": {
+        "layers": [1, 2, 3, 4],
+        "blocks": [3, 6, 9, 11],
+        "planes": [768, 768, 768, 768],
+        "strides": [16, 16, 16, 16],
     },
 }

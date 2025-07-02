@@ -47,25 +47,21 @@ MODEL:
         - name: SVDLoss
           type: SVDLoss
           kwargs: {}
-        - name: RepresentationOrthogonalityLoss
-          type: RepresentationOrthogonalityLoss
-          kwargs: 
-            weight: 0.5
         # - name: CELoss
         #   type: CELoss
         #   kwargs: {}
     net_cfg:
         - name: backbone
-          type: models.cfgcad.backbones.efficientnet_b4
+          type: models.cfgcad.backbones.VisionTransformerBackbone
           frozen: True
           kwargs:
-            pretrained: True
-            outlayers: [1,2,3,4]
+            pretrained: True            
+            model_name: vit_base_patch16_224
+            intermediate_layers: [3,6,9,11]          
         - name: neck
           prev: backbone
-          type: models.cfgcad.necks.MFCN
-          kwargs: 
-            outstrides: [16]
+          type: models.cfgcad.necks.ViT_MFCN
+          kwargs: {}
         - name: reconstruction
           prev: neck
           type: models.cfgcad.reconstructions.CFGReconstruction

@@ -13,7 +13,7 @@ This module contains utility functions for handling configuration objects, inclu
 import logging
 from collections.abc import Iterable, Sequence, ValuesView
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Union, Tuple, Dict, List, cast
 
 from jsonargparse import Namespace
 from jsonargparse import Path as JSONArgparsePath
@@ -59,7 +59,7 @@ def _convert_nested_path_to_str(config: Any) -> Any:  # noqa: ANN401
     elif isinstance(config, list):
         for i, item in enumerate(config):
             config[i] = _convert_nested_path_to_str(item)
-    elif isinstance(config, Path | JSONArgparsePath):
+    elif isinstance(config, Union[Path, JSONArgparsePath]):
         config = str(config)
     return config
 
@@ -100,7 +100,7 @@ def to_nested_dict(config: dict) -> dict:
         - Non-dot keys are kept as-is at the root level
         - Empty key segments (e.g. ``"dataset..name"``) are handled as literal keys
     """
-    out: dict[str, Any] = {}
+    out: Dict[str, Any] = {}
     for key, value in config.items():
         keys = key.split(".")
         _dict = out
@@ -110,7 +110,7 @@ def to_nested_dict(config: dict) -> dict:
     return out
 
 
-def to_yaml(config: Namespace | ListConfig | DictConfig) -> str:
+def to_yaml(config: Union[Namespace, ListConfig, DictConfig]) -> str:
     """Convert configuration object to YAML string.
 
     This function takes a configuration object and converts it to a YAML formatted string.
@@ -147,7 +147,7 @@ def to_yaml(config: Namespace | ListConfig | DictConfig) -> str:
     return OmegaConf.to_yaml(_config)
 
 
-def to_tuple(input_size: int | ListConfig) -> tuple[int, int]:
+def to_tuple(input_size: Union[int, ListConfig]) -> Tuple[int, int]:
     """Convert input size to a tuple of (height, width).
 
     This function takes either a single integer or a sequence of two integers and
@@ -183,22 +183,22 @@ def to_tuple(input_size: int | ListConfig) -> tuple[int, int]:
         When using a sequence input, the first value is interpreted as height and
         the second as width.
     """
-    ret_val: tuple[int, int]
+    ret_val: Tuple[int, int]
     if isinstance(input_size, int):
-        ret_val = cast(tuple[int, int], (input_size,) * 2)
-    elif isinstance(input_size, ListConfig | Sequence):
+        ret_val = cast(Tuple[int, int], (input_size,) * 2)
+    elif isinstance(input_size, Union[ListConfig, Sequence]):
         if len(input_size) != 2:
             msg = "Expected a single integer or tuple of length 2 for width and height."
             raise ValueError(msg)
 
-        ret_val = cast(tuple[int, int], tuple(input_size))
+        ret_val = cast(Tuple[int, int], tuple(input_size))
     else:
         msg = f"Expected either int or ListConfig, got {type(input_size)}"
         raise TypeError(msg)
     return ret_val
 
 
-def convert_valuesview_to_tuple(values: ValuesView) -> list[tuple]:
+def convert_valuesview_to_tuple(values: ValuesView) -> List[Tuple]:
     """Convert ``ValuesView`` to list of tuples for parameter combinations.
 
     This function takes a ``ValuesView`` object and converts it to a list of tuples
@@ -401,7 +401,7 @@ def dict_from_namespace(container: Namespace) -> dict:
     return output
 
 
-def update_config(config: DictConfig | ListConfig | Namespace) -> DictConfig | ListConfig | Namespace:
+def update_config(config: Union[DictConfig, ListConfig, Namespace]) -> Union[DictConfig, ListConfig, Namespace]:
     """Update configuration with warnings and NNCF settings.
 
     This function processes the provided configuration by:
@@ -436,7 +436,7 @@ def update_config(config: DictConfig | ListConfig | Namespace) -> DictConfig | L
     return _update_nncf_config(config)
 
 
-def _update_nncf_config(config: DictConfig | ListConfig) -> DictConfig | ListConfig:
+def _update_nncf_config(config: Union[DictConfig, ListConfig]) -> Union[DictConfig, ListConfig]:
     """Update NNCF configuration with input size settings.
 
     This function updates the Neural Network Compression Framework (NNCF)
@@ -481,7 +481,7 @@ def _update_nncf_config(config: DictConfig | ListConfig) -> DictConfig | ListCon
     return config
 
 
-def _show_warnings(config: DictConfig | ListConfig | Namespace) -> None:
+def _show_warnings(config: Union[DictConfig, ListConfig, Namespace]) -> None:
     """Show configuration-specific warnings.
 
     This function checks the provided configuration for conditions that may cause

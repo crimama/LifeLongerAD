@@ -32,6 +32,7 @@ class MFCN(nn.Module):
             feature_list.append(feature_resize)
 
         feature_align = torch.cat(feature_list, dim=1)
+        breakpoint()
 
         return {"feature_align": feature_align, "outplane": self.get_outplanes()}
 

@@ -3,6 +3,7 @@ import importlib
 
 import torch
 import torch.nn as nn
+from typing import Mapping
 
 from .criterion import IUFCriterion 
 
@@ -67,11 +68,8 @@ class CFGCAD(nn.Module):
         
         if input["image"].device != self.device:
             input = to_device(input, device=self.device)
-        for module_num, submodule in enumerate(self.children()):
-            if module_num == 2:
-                output = submodule(input, task_id)
-            else: 
-                output = submodule(input)
+        for module_num, submodule in enumerate(self.children()):            
+            output = submodule(input)
             input.update(output)
         return output
 
@@ -96,8 +94,15 @@ class CFGCAD(nn.Module):
                 module.train(mode)
         return self
     
-    def criterion(self, Outputs, Inputs, skip:bool = True):
-        loss = self._criterion(Outputs, Inputs, skip)
+    def criterion(self, Outputs, cl_manager, current_task_id: int = None, skip: bool = True):
+        """
+        Args:
+            Outputs (dict): Model outputs
+            cl_manager: Continual learning manager
+            current_task_id (int): Current task ID for representation orthogonality
+            skip (bool): Whether to skip certain loss calculations
+        """
+        loss = self._criterion(Outputs, cl_manager, current_task_id=current_task_id)
         return loss
     
     

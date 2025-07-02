@@ -36,8 +36,7 @@ Example:
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, fields, is_dataclass, replace
-from types import NoneType
-from typing import Any, ClassVar, Generic, TypeVar, get_args, get_type_hints
+from typing import Any, ClassVar, Generic, TypeVar, Union, get_args, get_type_hints
 
 import numpy as np
 import torch
@@ -45,6 +44,9 @@ from torch import tensor
 from torch.utils.data import default_collate
 from torchvision.transforms.v2.functional import resize
 from torchvision.tv_tensors import Image, Mask, Video
+
+# Python 3.8 compatibility
+NoneType = type(None)
 
 ImageT = TypeVar("ImageT", Image, Video, np.ndarray)
 T = TypeVar("T", torch.Tensor, np.ndarray)
@@ -80,12 +82,12 @@ class FieldDescriptor(Generic[Value]):
         42
     """
 
-    def __init__(self, validator_name: str | None = None, default: Value | None = None) -> None:
+    def __init__(self, validator_name: Union[str, None] = None, default: Union[Value, None] = None) -> None:
         """Initialize the descriptor."""
         self.validator_name = validator_name
         self.default = default
 
-    def __set_name__(self, owner: type[Instance], name: str) -> None:
+    def __set_name__(self, owner: type, name: str) -> None:
         """Set the name of the descriptor.
 
         Args:
@@ -94,7 +96,7 @@ class FieldDescriptor(Generic[Value]):
         """
         self.name = name
 
-    def __get__(self, instance: Instance | None, owner: type[Instance]) -> Value | None:
+    def __get__(self, instance: Union[Instance, None], owner: type) -> Union[Value, None]:
         """Get the value of the descriptor.
 
         Args:
@@ -128,7 +130,7 @@ class FieldDescriptor(Generic[Value]):
             value = validator(value)
         instance.__dict__[self.name] = value
 
-    def get_types(self, owner: type[Instance]) -> tuple[type, ...]:
+    def get_types(self, owner: type) -> tuple:
         """Get the types of the descriptor.
 
         Args:
@@ -147,7 +149,7 @@ class FieldDescriptor(Generic[Value]):
             msg = f"Unable to determine types for {self.name} in {owner}"
             raise TypeError(msg) from e
 
-    def is_optional(self, owner: type[Instance]) -> bool:
+    def is_optional(self, owner: type) -> bool:
         """Check if the descriptor is optional.
 
         Args:
@@ -188,9 +190,9 @@ class _InputFields(Generic[T, ImageT, MaskT, PathT], ABC):
     """
 
     image: FieldDescriptor[ImageT] = FieldDescriptor(validator_name="validate_image")
-    gt_label: FieldDescriptor[T | None] = FieldDescriptor(validator_name="validate_gt_label")
-    gt_mask: FieldDescriptor[MaskT | None] = FieldDescriptor(validator_name="validate_gt_mask")
-    mask_path: FieldDescriptor[PathT | None] = FieldDescriptor(validator_name="validate_mask_path")
+    gt_label: FieldDescriptor[Union[T, None]] = FieldDescriptor(validator_name="validate_gt_label")
+    gt_mask: FieldDescriptor[Union[MaskT, None]] = FieldDescriptor(validator_name="validate_gt_mask")
+    mask_path: FieldDescriptor[Union[PathT, None]] = FieldDescriptor(validator_name="validate_mask_path")
 
     @staticmethod
     @abstractmethod
@@ -210,7 +212,7 @@ class _InputFields(Generic[T, ImageT, MaskT, PathT], ABC):
 
     @staticmethod
     @abstractmethod
-    def validate_gt_mask(gt_mask: MaskT) -> MaskT | None:
+    def validate_gt_mask(gt_mask: MaskT) -> Union[MaskT, None]:
         """Validate the ground truth mask.
 
         Args:
@@ -226,7 +228,7 @@ class _InputFields(Generic[T, ImageT, MaskT, PathT], ABC):
 
     @staticmethod
     @abstractmethod
-    def validate_mask_path(mask_path: PathT) -> PathT | None:
+    def validate_mask_path(mask_path: PathT) -> Union[PathT, None]:
         """Validate the mask path.
 
         Args:
@@ -242,7 +244,7 @@ class _InputFields(Generic[T, ImageT, MaskT, PathT], ABC):
 
     @staticmethod
     @abstractmethod
-    def validate_gt_label(gt_label: T) -> T | None:
+    def validate_gt_label(gt_label: T) -> Union[T, None]:
         """Validate the ground truth label.
 
         Args:

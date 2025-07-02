@@ -12,3 +12,4 @@ from .uniad import UniADBuilder
 from .cfgcad import CFGCAD # <--- Add this line
 from .langcad.model import LANGCAD
 from .simplenet.model import SimpleNet
+from .padim import PaDiM

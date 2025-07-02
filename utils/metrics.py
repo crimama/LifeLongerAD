@@ -134,6 +134,8 @@ class MetricCalculator:
             out = data.detach().cpu().numpy()
         elif isinstance(data, np.ndarray):
             out = data 
+        else:
+            out = data 
         return out 
     
     def _average_precision(self, y_preds:np.ndarray, y_trues:np.ndarray):

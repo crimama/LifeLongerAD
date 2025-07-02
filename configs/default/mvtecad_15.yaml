@@ -1,5 +1,5 @@
 DEFAULT:
-  seed: 42
+  seed: 0
   savedir: ./results
   exp_name: '.'
 
@@ -15,7 +15,7 @@ DATASET:
   params:
     anomaly_ratio: 0.0
     baseline: True
-  class_names:
+  class_names:      
     - capsule
     - toothbrush
     - screw

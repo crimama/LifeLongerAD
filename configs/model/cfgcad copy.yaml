@@ -44,27 +44,25 @@ MODEL:
           type: FeatureMSELoss
           kwargs:
             weight: 1.0
+        - name: CELoss
+          type: CELoss
+          kwargs: {}
         - name: SVDLoss
           type: SVDLoss
           kwargs: {}
-        - name: RepresentationOrthogonalityLoss
-          type: RepresentationOrthogonalityLoss
-          kwargs: 
-            weight: 0.5
-        # - name: CELoss
-        #   type: CELoss
-        #   kwargs: {}
     net_cfg:
         - name: backbone
           type: models.cfgcad.backbones.efficientnet_b4
           frozen: True
           kwargs:
             pretrained: True
+            # select outlayers from: resnet [1,2,3,4], efficientnet [1,2,3,4,5]
+            # empirically, for industrial: resnet [1,2,3] or [2,3], efficientnet [1,2,3,4] or [2,3,4]
             outlayers: [1,2,3,4]
         - name: neck
           prev: backbone
           type: models.cfgcad.necks.MFCN
-          kwargs: 
+          kwargs:
             outstrides: [16]
         - name: reconstruction
           prev: neck

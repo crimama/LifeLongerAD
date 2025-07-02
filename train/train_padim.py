@@ -59,15 +59,35 @@ class PerformanceMonitor:
     def calculate_flops(self, model, input_tensor):
         if THOP_AVAILABLE and not self.flops_calculated:
             try:
-                model_copy = model
-                flops, params = profile(model_copy, inputs=(input_tensor,), verbose=False)
+                # Try to get the unwrapped model if it's wrapped by accelerator
+                if hasattr(model, 'module'):
+                    model_for_flops = model.module
+                else:
+                    model_for_flops = model
+                
+                # Create a temporary copy and move to CPU to avoid device conflicts
+                input_copy = input_tensor.cpu() if input_tensor.is_cuda else input_tensor
+                
+                # Set model to eval mode temporarily for FLOPs calculation
+                original_training = model_for_flops.training
+                model_for_flops.eval()
+                
+                flops, params = profile(model_for_flops, inputs=(input_copy,), verbose=False)
                 self.flops = flops
                 self.params = params
                 self.flops_calculated = True
+                
+                # Restore original training mode
+                if original_training:
+                    model_for_flops.train()
+                else:
+                    model_for_flops.eval()
+                    
             except Exception as e:
                 _logger.warning(f"FLOPs calculation failed: {e}")
                 self.flops = 0
                 self.params = 0
+                self.flops_calculated = True  # Mark as calculated to avoid repeated attempts
     
     def get_metrics(self):
         throughput = self.total_samples / self.total_time if self.total_time > 0 else 0
@@ -152,23 +172,47 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
         sample_batch = next(iter(dataloader))
         sample_images = sample_batch[0]
         if len(sample_images) > 0:
-            perf_monitor.calculate_flops(model, sample_images[:1])  # Use single sample for FLOPs calculation
+            # Use a more robust approach for FLOPs calculation
+            sample_input = sample_images[:1].cpu()  # Move to CPU and use single sample
+            
+            # Try to get the unwrapped model if it's wrapped by accelerator
+            if hasattr(model, 'module'):
+                model_for_flops = model.module
+            else:
+                model_for_flops = model
+            
+            # Set model to eval mode temporarily for FLOPs calculation
+            original_training = model_for_flops.training
+            model_for_flops.eval()
+            
+            perf_monitor.calculate_flops(model_for_flops, sample_input)
+            
+            # Restore original training mode
+            if original_training:
+                model_for_flops.train()
+            else:
+                model_for_flops.eval()
+                
     except Exception as e:
         _logger.warning(f"Failed to calculate FLOPs during initialization: {e}")
+        # Continue without FLOPs calculation
 
     # Start performance monitoring for training
     train_start_time = time.time()
     total_train_samples = 0
     
-    # Count total samples in dataloader
-    for batch in dataloader:
-        total_train_samples += len(batch[0])
-    
     # Start training performance monitoring
     perf_monitor.start_batch()
-    
+
     model.eval() 
-    model.fit(dataloader)
+    image_bank = [] 
+    for idx, (images, _, _) in enumerate(dataloader):
+        image_bank.append(images.detach().cpu())
+        total_train_samples += images.size(0)
+        
+    # Concatenate along batch dimension (dim=0)
+    all_images = torch.cat(image_bank, dim=0)
+    model.fit(all_images)
     
     # End training performance monitoring
     perf_monitor.end_batch(total_train_samples)
@@ -218,7 +262,31 @@ def test(model, dataloader, device,
         
         # Calculate FLOPs on first batch
         if idx == 0:
-            perf_monitor.calculate_flops(model, images)
+            try:
+                # Use a more robust approach for FLOPs calculation
+                sample_input = images[:1].cpu()  # Move to CPU and use single sample
+                
+                # Try to get the unwrapped model if it's wrapped by accelerator
+                if hasattr(model, 'module'):
+                    model_for_flops = model.module
+                else:
+                    model_for_flops = model
+                
+                # Set model to eval mode temporarily for FLOPs calculation
+                original_training = model_for_flops.training
+                model_for_flops.eval()
+                
+                perf_monitor.calculate_flops(model_for_flops, sample_input)
+                
+                # Restore original training mode
+                if original_training:
+                    model_for_flops.train()
+                else:
+                    model_for_flops.eval()
+                    
+            except Exception as e:
+                _logger.warning(f"FLOPs calculation failed during inference: {e}")
+                # Continue without FLOPs calculation
         
         # End performance monitoring
         perf_monitor.end_batch(images.size(0))
@@ -289,12 +357,33 @@ def fit(
         # 실제 입력 크기에 맞춰 수정해야 합니다.
         input_size = (1, 3, 224, 224)
         try:
+            # Try to get the unwrapped model if it's wrapped by accelerator
+            if hasattr(model, 'module'):
+                model_for_flops = model.module
+            else:
+                model_for_flops = model
+            
+            # Create sample input on CPU to avoid device conflicts
+            sample_input = torch.randn(input_size)
+            
+            # Set model to eval mode temporarily for FLOPs calculation
+            original_training = model_for_flops.training
+            model_for_flops.eval()
+            
             # FLOPs 계산
-            model_flops, model_params = profile(model, inputs=(torch.randn(input_size).to(accelerator.device),))
+            model_flops, model_params = profile(model_for_flops, inputs=(sample_input,), verbose=False)
             _logger.info(f"Model FLOPs: {model_flops / 1e9:.2f} GFLOPs, Parameters: {model_params / 1e6:.2f} M")
+            
+            # Restore original training mode
+            if original_training:
+                model_for_flops.train()
+            else:
+                model_for_flops.eval()
+                
         except Exception as e:
             _logger.warning(f"FLOPs calculation failed: {e}")
             model_flops = 0.0
+            model_params = 0.0
 
         # Train
         for epoch in range(epochs):

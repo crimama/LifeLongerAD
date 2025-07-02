@@ -104,12 +104,11 @@ class CFGReconstruction(nn.Module):
         return src, pos_embed
         
         
-    def forward(self, input, task_id=None):
+    def forward(self, input):
         feature_align = input["feature_align"]  # B x C X H x W #? MFCN에서 size 맞춰준 feature
         src, pos_embed = self.forward_pre(feature_align)
         device = feature_align.device
-        if self.training:
-            if task_id is None: raise ValueError("task_id required for training")
+        if self.training:            
             B = feature_align.shape[0]            
                                     
             #! --- Single pass through Transformer ---
@@ -150,6 +149,7 @@ class CFGReconstruction(nn.Module):
             
         else: # Inference                                                                                
             #! --- Task 임베딩을 src에 더하기 ---            
+            
             features_uncond = src
             rec_tokens, _ = self.transformer(features_uncond, pos_embed) # L, B, C
             rec_tokens = rec_tokens[3] 

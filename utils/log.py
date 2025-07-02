@@ -8,6 +8,9 @@ from collections import OrderedDict
 import torch
 from river.drift import ADWIN
 from logging.handlers import RotatingFileHandler
+import time
+import pandas as pd
+from thop import clever_format
     
     
 
@@ -323,3 +326,105 @@ def extract_experiment_summary(config):
     # --- 모델 파라미터 
     summary.update(config.MODEL.params.net_cfg[2].kwargs)
     return summary
+
+def save_performance_summary(savedir, class_name, train_metrics, test_metrics, epoch):
+    """Save comprehensive performance summary to JSON and CSV files"""
+    import json
+    import pandas as pd
+    
+    # Create performance summary
+    summary = {
+        'class_name': class_name,
+        'epoch': epoch,
+        'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+        'training': train_metrics,
+        'inference': test_metrics
+    }
+    
+    # Save as JSON
+    os.makedirs(f"{savedir}/performance_logs", exist_ok=True)
+    with open(f"{savedir}/performance_logs/{class_name}_epoch_{epoch}_summary.json", "w") as f:
+        json.dump(summary, f, indent=2)
+    
+    # Create or append to CSV log
+    csv_path = f"{savedir}/performance_logs/performance_log.csv"
+    
+    # Flatten metrics for CSV
+    csv_data = {
+        'class_name': class_name,
+        'epoch': epoch,
+        'timestamp': summary['timestamp'],
+        'train_throughput': train_metrics.get('throughput_samples_per_sec', 0),
+        'train_max_gpu_memory_gb': train_metrics.get('max_gpu_memory_gb', 0),
+        'train_total_time_sec': train_metrics.get('total_time_sec', 0),
+        'train_flops': train_metrics.get('flops', 0),
+        'train_params': train_metrics.get('params', 0),
+        'test_throughput': test_metrics.get('throughput_samples_per_sec', 0),
+        'test_max_gpu_memory_gb': test_metrics.get('max_gpu_memory_gb', 0),
+        'test_total_time_sec': test_metrics.get('total_time_sec', 0),
+        'test_flops': test_metrics.get('flops', 0),
+        'test_params': test_metrics.get('params', 0)
+    }
+    
+    df = pd.DataFrame([csv_data])
+    
+    # Append to existing CSV or create new one
+    if os.path.exists(csv_path):
+        existing_df = pd.read_csv(csv_path)
+        combined_df = pd.concat([existing_df, df], ignore_index=True)
+        combined_df.to_csv(csv_path, index=False)
+    else:
+        df.to_csv(csv_path, index=False)
+
+def generate_performance_report(savedir):
+    """Generate a comprehensive performance report across all classes and epochs"""
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    
+    csv_path = f"{savedir}/performance_logs/performance_log.csv"
+    
+    if not os.path.exists(csv_path):
+        return
+    
+    df = pd.read_csv(csv_path)
+    
+    # Create performance report
+    report_path = f"{savedir}/performance_logs/performance_report.txt"
+    
+    with open(report_path, "w") as f:
+        f.write("Performance Analysis Report\n")
+        f.write("=" * 50 + "\n\n")
+        
+        # Overall statistics
+        f.write("Overall Statistics:\n")
+        f.write("-" * 20 + "\n")
+        f.write(f"Total Classes: {df['class_name'].nunique()}\n")
+        f.write(f"Total Epochs: {len(df)}\n")
+        f.write(f"Average Training Throughput: {df['train_throughput'].mean():.2f} samples/sec\n")
+        f.write(f"Average Inference Throughput: {df['test_throughput'].mean():.2f} samples/sec\n")
+        f.write(f"Max Training GPU Memory: {df['train_max_gpu_memory_gb'].max():.3f} GB\n")
+        f.write(f"Max Inference GPU Memory: {df['test_max_gpu_memory_gb'].max():.3f} GB\n")
+        f.write("\n")
+        
+        # Per-class statistics
+        f.write("Per-Class Statistics:\n")
+        f.write("-" * 25 + "\n")
+        for class_name in df['class_name'].unique():
+            class_df = df[df['class_name'] == class_name]
+            f.write(f"\n{class_name}:\n")
+            f.write(f"  Training Throughput: {class_df['train_throughput'].mean():.2f} samples/sec\n")
+            f.write(f"  Inference Throughput: {class_df['test_throughput'].mean():.2f} samples/sec\n")
+            f.write(f"  Max Training GPU Memory: {class_df['train_max_gpu_memory_gb'].max():.3f} GB\n")
+            f.write(f"  Max Inference GPU Memory: {class_df['test_max_gpu_memory_gb'].max():.3f} GB\n")
+            
+            # FLOPs and params (should be same across epochs for same model)
+            if class_df['train_flops'].iloc[0] > 0:
+                try:
+                    flops_str, params_str = clever_format([class_df['train_flops'].iloc[0], class_df['train_params'].iloc[0]], "%.3f")
+                    f.write(f"  Model FLOPs: {flops_str}\n")
+                    f.write(f"  Model Params: {params_str}\n")
+                except:
+                    f.write(f"  Model FLOPs: {class_df['train_flops'].iloc[0]:.0f}\n")
+                    f.write(f"  Model Params: {class_df['train_params'].iloc[0]:.0f}\n")
+    
+    print(f"Performance report saved to: {report_path}")

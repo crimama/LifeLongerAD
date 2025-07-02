@@ -26,13 +26,6 @@ import math
 from collections.abc import Mapping # Import Mapping for type checking in to_device if needed
 
 class CL_Transformer():
-    """
-    Continual Learning class adapted for Transformer-like architectures and reconstruction tasks.
-    Applies dynamic sparse training principles inspired by SpaceNet, focusing
-    on connection sparsity within Linear/Conv2d layers. Treats the final layer
-    the same as internal layers regarding sparsity management.
-    Grow strategy uses accumulated weight importance to select new connections.
-    """
     def __init__(self, model, device, sparsity_config, replace_percentage=0.2):
         """
         Initializes the Continual Learning manager.
@@ -68,6 +61,10 @@ class CL_Transformer():
         self.replace_count = {} # Drop/Grow 시 교체할 연결 수
         # Removed last_layer_active_task
 
+        # Feature store for representation orthogonality
+        self.feature_buffer = {}  # Buffer to store features during training
+        self.feature_key = "middle_decoder_feature_0"  # Default feature key to use
+
         # Initialize state variables (masks will be created on self.device initially)
         self._initialize_state() # mask, previous_mask, importance 에 모두 zero initialize 
         # Create initial masks (also on self.device initially)
@@ -93,7 +90,7 @@ class CL_Transformer():
 
         if not learnable_layers:
              raise ValueError("No learnable layers (Linear, Conv2d) with parameters found in the model.")
-        print(f"Identified Learnable Layers: {[layer['name'] for layer in learnable_layers]}")
+        # print(f"Identified Learnable Layers: {[layer['name'] for layer in learnable_layers]}")
         return learnable_layers
 
     def _get_param_info(self):
@@ -179,7 +176,8 @@ class CL_Transformer():
                 selected_flat_indices = available_indices[perm[:num_to_select]]
                 self.mask[param_name].view(-1)[selected_flat_indices] = 1.0
             elif num_to_select > 0:
-                print(f"  Param '{param_name}': Warning! Wanted {num_to_select} connections, but 0 were available in non-previous spots.")
+                # print(f"  Param '{param_name}': Warning! Wanted {num_to_select} connections, but 0 were available in non-previous spots.")
+                pass
 
     def set_init_network_weight(self):
         """Stores the initial weights and applies the initial mask."""
@@ -287,7 +285,7 @@ class CL_Transformer():
                 if k > 0:
                     _, indices_to_remove_absolute = torch.topk(flat_importance, k, largest=False, sorted=False)
                     if not torch.isfinite(flat_importance[indices_to_remove_absolute]).all():
-                         print(f"Warning: topk in drop for {param_name} returned indices pointing to non-finite values. Retrying with filter.")
+                        #  print(f"Warning: topk in drop for {param_name} returned indices pointing to non-finite values. Retrying with filter.")
                          finite_mask_flat = torch.isfinite(flat_importance)
                          finite_indices = torch.where(finite_mask_flat)[0]
                          if len(finite_indices) >= k:
@@ -295,7 +293,7 @@ class CL_Transformer():
                               _, topk_indices_relative = torch.topk(finite_importances, k, largest=False)
                               indices_to_remove_absolute = finite_indices[topk_indices_relative]
                          else:
-                              print(f"Warning: Not enough finite values ({len(finite_indices)}) to drop {k} for {param_name}.")
+                            #   print(f"Warning: Not enough finite values ({len(finite_indices)}) to drop {k} for {param_name}.")
                               indices_to_remove_absolute = None
                               self.replace_count[param_name] = 0
 
@@ -401,23 +399,79 @@ class CL_Transformer():
 
 
     # --- Task Transition ---
+    def collect_features(self, outputs):
+        """Collect features from model outputs for current task."""
+        if self.feature_key in outputs:
+            features = outputs[self.feature_key].detach()
+            if self.current_task not in self.feature_buffer:
+                self.feature_buffer[self.current_task] = []
+            
+            # 최대 10개의 특징만 저장 (메모리 관리)
+            if len(self.feature_buffer[self.current_task]) >= 10:
+                # 가장 오래된 특징 제거
+                self.feature_buffer[self.current_task].pop(0)
+            
+            self.feature_buffer[self.current_task].append(features)
+            
+            # 메모리 정리
+            if len(self.feature_buffer) > 2:  # 현재 태스크와 이전 태스크만 유지
+                for task_id in list(self.feature_buffer.keys()):
+                    if task_id < self.current_task - 1:
+                        del self.feature_buffer[task_id]
+                torch.cuda.empty_cache()
+
+    def get_representative_features(self, task_id):
+        """Get representative features for a task by averaging collected features."""
+        if task_id not in self.feature_buffer or not self.feature_buffer[task_id]:
+            return None
+        
+        # Concatenate all collected features and compute mean
+        all_features = torch.cat(self.feature_buffer[task_id], dim=0)
+        representative_features = all_features.mean(dim=0, keepdim=True)
+        return representative_features
+
     def prepare_next_task(self):
         """Prepares the network state for the next task."""
-        print(f"\n--- Preparing for Task {self.current_task + 1} ---")        
+        print(f"\n--- Preparing for Task {self.current_task + 1} ---")
+        
+        # Get representative features for current task before transition
+        if self.current_task in self.feature_buffer:
+            representative_features = self.get_representative_features(self.current_task)
+            if representative_features is not None:
+                # Update past feature store in criterion
+                if hasattr(self.model, '_criterion') and hasattr(self.model._criterion, 'update_past_feature_store'):
+                    self.model._criterion.update_past_feature_store(
+                        self.current_task,
+                        [representative_features]  # Pass as list for compatibility
+                    )
+            # Clear feature buffer for current task
+            self.feature_buffer[self.current_task] = []
+        
         self.create_masks()
         self.initialize_new_task_weights()
         print(f"--- Ready for Task {self.current_task + 1} ---")
         return True
     
     def save_current_mask(self):
+        """Save current mask and update task counter."""
         with torch.no_grad():
             for name in self.mask:
-                 current_mask = self.mask[name].to(self.device)
-                 if name in self.previous_mask:
-                      prev_mask = self.previous_mask[name].to(self.device)
-                      self.previous_mask[name] = ((prev_mask + current_mask) > 0).float()
-                 else:
-                      self.previous_mask[name] = (current_mask > 0).float()
+                current_mask = self.mask[name].to(self.device)
+                if name in self.previous_mask:
+                    prev_mask = self.previous_mask[name].to(self.device)
+                    self.previous_mask[name] = ((prev_mask + current_mask) > 0).float()
+                else:
+                    self.previous_mask[name] = (current_mask > 0).float()
+
+        # Get final representative features before incrementing task counter
+        if self.current_task in self.feature_buffer:
+            representative_features = self.get_representative_features(self.current_task)
+            if representative_features is not None and hasattr(self.model, '_criterion'):
+                self.model._criterion.update_past_feature_store(
+                    self.current_task,
+                    [representative_features]
+                )
+            self.feature_buffer[self.current_task] = []  # Clear buffer
 
         self.current_task += 1
 

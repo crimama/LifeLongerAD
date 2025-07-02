@@ -3,10 +3,10 @@
 # Copyright (C) 2024 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
+from typing import Any, Union
 
 
-def get_nested_attr(obj: Any, attr_path: str, default: Any | None = None) -> Any:  # noqa: ANN401
+def get_nested_attr(obj: Any, attr_path: str, default: Union[Any, None] = None) -> Any:  # noqa: ANN401
     """Safely retrieves a nested attribute from an object.
 
     This function helps reduce boilerplate code when working with nested attributes, by allowing you to retrieve a

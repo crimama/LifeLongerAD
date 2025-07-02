@@ -153,8 +153,10 @@ def iuf_config_update(config):
     # update feature size
     _, reconstruction_type = config.MODEL.params.net_cfg[2].type.rsplit(".", 1)
     if reconstruction_type in ["UniAD","CFGReconstruction"]:
-        input_size = [config.DATASET.img_size for i in range(2)]
-        outstride = config.MODEL.params.net_cfg[1].kwargs.outstrides[0]
+        # if "efficientnet" in config.MODEL.params.net_cfg[0].type:
+        input_size = [config.DATASET.img_size for i in range(2)]        
+        # outstride = config.MODEL.params.net_cfg[1].kwargs.outstrides[0]
+        outstride = 16
         assert (
             input_size[0] % outstride == 0
         ), "input_size must could be divided by outstrides exactly!"
@@ -163,6 +165,7 @@ def iuf_config_update(config):
         ), "input_size must could be divided by outstrides exactly!"
         feature_size = [s // outstride for s in input_size]        
         config.MODEL.params.net_cfg[2].kwargs.feature_size = feature_size
+            
 
     # update planes & strides
     backbone_path, backbone_type = config.MODEL.params.net_cfg[0].type.rsplit(".", 1)
@@ -172,27 +175,27 @@ def iuf_config_update(config):
     outblocks = None
     if "efficientnet" in backbone_type:
         outblocks = []
-    outstrides = []
-    outplanes = []
-    for layer in config.MODEL.params.net_cfg[0].kwargs.outlayers:
-        if layer not in backbone["layers"]:
-            raise ValueError(
-                "only layer {} for backbone {} is allowed, but get {}!".format(
-                    backbone["layers"], backbone_type, layer
+        outstrides = []
+        outplanes = []
+        for layer in config.MODEL.params.net_cfg[0].kwargs.outlayers:
+            if layer not in backbone["layers"]:
+                raise ValueError(
+                    "only layer {} for backbone {} is allowed, but get {}!".format(
+                        backbone["layers"], backbone_type, layer
+                    )
                 )
-            )
-        idx = backbone["layers"].index(layer)
+            idx = backbone["layers"].index(layer)
+            if "efficientnet" in backbone_type:
+                outblocks.append(backbone["blocks"][idx])
+            outstrides.append(backbone["strides"][idx])
+            outplanes.append(backbone["planes"][idx])
         if "efficientnet" in backbone_type:
-            outblocks.append(backbone["blocks"][idx])
-        outstrides.append(backbone["strides"][idx])
-        outplanes.append(backbone["planes"][idx])
-    if "efficientnet" in backbone_type:
-        config.MODEL.params.net_cfg[0].kwargs.pop("outlayers")
-        config.MODEL.params.net_cfg[0].kwargs.outblocks = outblocks
-    config.MODEL.params.net_cfg[0].kwargs.outstrides = outstrides
-    config.MODEL.params.net_cfg[1].kwargs.outplanes = sum(outplanes)
-    
-    # if "MVTecAD" == config.DATASET.dataset_name:
-    #     config.MODEL.params.net_cfg[2].kwargs.num_classes
+            config.MODEL.params.net_cfg[0].kwargs.pop("outlayers")
+            config.MODEL.params.net_cfg[0].kwargs.outblocks = outblocks
+        config.MODEL.params.net_cfg[0].kwargs.outstrides = outstrides
+        config.MODEL.params.net_cfg[1].kwargs.outplanes = sum(outplanes)
+        
+        # if "MVTecAD" == config.DATASET.dataset_name:
+        #     config.MODEL.params.net_cfg[2].kwargs.num_classes
 
     return config

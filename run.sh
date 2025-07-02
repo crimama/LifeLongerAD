@@ -13,7 +13,13 @@ if [ "$exp_id" -eq 141 ]; then
     exp='14_1_with_1_step'
     gpu_id=0
 elif [ "$exp_id" -eq 35 ]; then
-    method_setting="cfgcad"
+    method_setting="simplenet"
+    continual='true'
+    gpu_id=0
+    exp='3_5_with_5_step'
+    dataset='mvtecad_35'
+elif [ "$exp_id" -eq 351 ]; then
+    method_setting="cfgcad_vit"
     continual='true'
     gpu_id=0
     exp='3_5_with_5_step'
@@ -31,7 +37,7 @@ elif [ "$exp_id" -eq 1051 ]; then
     dataset='mvtecad_1051'
     gpu_id=0
 elif [ "$exp_id" -eq 15 ]; then
-    method_setting="simplenet"
+    method_setting="proxycore"
     continual='false'
     exp='1_1_with_15_step'
     dataset='mvtecad_15'
@@ -42,16 +48,17 @@ else
 fi
 
 
+MVTecAD='capsule hazelnut transistor cable bottle carpet grid leather metal_nut screw tile toothbrush wood zipper'
+MVTecAD='screw grid wood capsule leather tile transistor'
 
 
-for c in $continual
+for cn in $MVTecAD
 do
-    if [ "$c" = "true" ]; then
+    if [ "$continual" = "true" ]; then
         continual_method='DST'
     else
         continual_method="no"
     fi
-
     for cm in $continual_method
     do 
         for m in $method_setting
@@ -61,11 +68,12 @@ do
                     CUDA_VISIBLE_DEVICES=$gpu_id python main.py \
                         default_setting=./configs/default/$d.yaml \
                         model_setting=./configs/model/$m.yaml \
-                        DEFAULT.exp_name=sparse23_$cm-$exp \
-                        CONTINUAL.continual=$c \
+                        DEFAULT.exp_name=baseline \
+                        CONTINUAL.continual='false' \
                         CONTINUAL.method.name=$cm \
                         TRAIN.epochs=200 \
-                        TRAIN.wandb.use=true
+                        TRAIN.wandb.use=false \
+                        DATASET.class_names=[$cn]
             done 
         done
     done

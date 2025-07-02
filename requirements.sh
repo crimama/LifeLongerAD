@@ -26,6 +26,7 @@ pip install jsonargparse
 pip install lightning
 pip install openvino
 pip install 'git+https://github.com/katsura-jp/pytorch-cosine-annealing-with-warmup'
+pip install thop  # For FLOPs calculation
 
 
 apt-get update && apt-get install libgl1

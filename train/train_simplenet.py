@@ -2,33 +2,16 @@ import wandb
 import logging
 import time
 import os 
-import numpy as np
-import pandas as pd
 
 import torch
-import torch.nn as nn 
-import torch.nn.functional as F 
-from datasets.mvtecad import class_label_mapping
 from collections import OrderedDict
-from cosine_annealing_warmup import CosineAnnealingWarmupRestarts
-
-from utils.metrics import MetricCalculator
-from utils.log import AverageMeter,metric_logging,DriftMonitor
+from utils.log import AverageMeter,metric_logging
 import warnings
 warnings.filterwarnings('ignore')
 
 _logger = logging.getLogger('train')
-    
 
 def train(model, dataloader, optimizer, accelerator, log_interval: int, epoch, epochs, cfg) -> dict:
-    
-    def collect_gradients(cfg, model, all_gradients, epoch, step):
-        if ((cfg.CONTINUAL.online and (step % 10 == 0)) or (not cfg.CONTINUAL.online and ((epoch) % 2 == 0) and (step % 4 == 0))):
-            step_grad_dict = {}
-            for name, param in model.named_parameters():
-                if param.grad is not None:
-                    step_grad_dict[name] = param.grad.clone().detach().cpu().numpy()
-            all_gradients.append(step_grad_dict)
     
     def log_training_info(step, accelerator, dataloader, epoch, epochs,
                       losses_m,
@@ -73,7 +56,6 @@ def train(model, dataloader, optimizer, accelerator, log_interval: int, epoch, e
     
     current_class_name = dataloader.dataset.class_name
     model.train()
-    all_gradients = []
     
     end = time.time()
     dsc_opt = optimizer['dsc_opt']
@@ -82,8 +64,7 @@ def train(model, dataloader, optimizer, accelerator, log_interval: int, epoch, e
     for step, (images, labels, class_labels) in enumerate(dataloader):        
         data_time_m.update(time.time() - end)    
         
-        loss = model.train_discriminator(images)         
-        
+        loss = model.train_discriminator(images)
         dsc_opt.zero_grad()
         pre_projection_opt.zero_grad()
         accelerator.backward(loss)  
@@ -103,7 +84,7 @@ def train(model, dataloader, optimizer, accelerator, log_interval: int, epoch, e
                     
         end = time.time()
     
-    return {"loss": losses_m.avg, "gradients": all_gradients, "class_name": current_class_name}
+    return {"loss": losses_m.avg, "class_name": current_class_name}
 
 def test(model, dataloader,
          savedir, use_wandb, epoch, optimizer, class_name, current_class_name,
@@ -163,8 +144,6 @@ def fit(
     for n_task, (current_class_name, class_loader_dict) in enumerate(loader_dict.items()):        
         
         best_score = 0.0
-        if (n_task == 0) or (cfg.CONTINUAL.continual==False):
-            drift_monitor = DriftMonitor(log_dir=os.path.join(savedir,'DriftMonitor.log'))
         
         torch.cuda.empty_cache()
         _logger.info(f"Current Class Name : {current_class_name}")        
@@ -209,14 +188,14 @@ def fit(
                 )
                     
         
-            # EVALUATION
-            num_current_class = list(loader_dict.keys()).index(current_class_name)            
-            # model save
-            score = (test_metrics['img_level']['auroc'] + test_metrics['pix_level']['auroc']) / 2
-            if best_score < score:
-                os.makedirs(f"{savedir}/model_weight/", exist_ok=True)
-                torch.save(model.state_dict(),f"{savedir}/model_weight/{current_class_name}_model.pth")
-                best_score = score 
+                # EVALUATION
+                num_current_class = list(loader_dict.keys()).index(current_class_name)            
+                # model save
+                score = (test_metrics['img_level']['auroc'] + test_metrics['pix_level']['auroc']) / 2
+                if best_score < score:
+                    os.makedirs(f"{savedir}/model_weight/", exist_ok=True)
+                    torch.save(model.state_dict(),f"{savedir}/model_weight/{current_class_name}_model.pth")
+                    best_score = score 
     
         if cfg.CONTINUAL.continual:
             # Continual method 

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 # MFCN: multi-scale feature concat network
-__all__ = ["MFCN"]
+__all__ = ["MFCN", "ViT_MFCN"]
 
 
 class MFCN(nn.Module):
@@ -33,6 +33,30 @@ class MFCN(nn.Module):
 
         feature_align = torch.cat(feature_list, dim=1)
 
+        return {"feature_align": feature_align, "outplane": self.get_outplanes()}
+
+    def get_outplanes(self):
+        return self.outplanes
+
+    def get_outstrides(self):
+        return self.outstrides
+
+
+class ViT_MFCN(nn.Module):
+    def __init__(self, inplanes, instrides):
+        super(ViT_MFCN, self).__init__()
+#         
+        self.inplanes = inplanes
+        self.outplanes = inplanes[0]
+        self.instrides = instrides
+        self.outstrides = instrides
+        
+    def forward(self, input):
+        features = input["features"]
+        assert len(self.inplanes) == len(features)
+
+        feature_align = torch.cat([f.unsqueeze(1) for f in features],dim=1).mean(dim=1)                
+        
         return {"feature_align": feature_align, "outplane": self.get_outplanes()}
 
     def get_outplanes(self):
