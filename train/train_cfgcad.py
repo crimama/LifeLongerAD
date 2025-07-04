@@ -8,6 +8,7 @@ import signal
 import sys
 import gc
 import psutil
+import omegaconf
 
 import torch
 import torch.nn as nn 
@@ -352,8 +353,32 @@ def fit(
         model = model.cuda()
         task_labels = [] 
         for k,v in loader_dict.items():
-            temp = class_label_mapping[k]  # k is already the class name string, not an iterable of characters
-            task_labels.append(temp)
+            # Handle case where k might be a list of class names or a single class name
+            print(f"Processing loader_dict key: {k} (type: {type(k)})")
+            try:
+                if isinstance(k, (list, tuple)) or isinstance(k, omegaconf.listconfig.ListConfig):
+                    # If k is a list/tuple/ListConfig of class names, get mapping for each
+                    print(f"Key is a list/tuple/ListConfig, processing each item: {k}")
+                    temp = []
+                    for class_name in k:
+                        if class_name not in class_label_mapping:
+                            _logger.error(f"Class name '{class_name}' not found in class_label_mapping")
+                            _logger.error(f"Available keys: {list(class_label_mapping.keys())}")
+                            raise KeyError(f"Class name '{class_name}' not found in class_label_mapping")
+                        temp.append(class_label_mapping[class_name])
+                else:
+                    # If k is a single class name string
+                    print(f"Key is a single class name: {k}")
+                    if k not in class_label_mapping:
+                        _logger.error(f"Class name '{k}' not found in class_label_mapping")
+                        _logger.error(f"Available keys: {list(class_label_mapping.keys())}")
+                        raise KeyError(f"Class name '{k}' not found in class_label_mapping")
+                    temp = class_label_mapping[k]
+                task_labels.append(temp)
+                print(f"Successfully mapped {k} to {temp}")
+            except Exception as e:
+                _logger.error(f"Error processing key {k}: {e}")
+                raise
             
         ## Enhanced Continual Learning Configuration
         sparsity_config = cfg.CONTINUAL.method.params        
