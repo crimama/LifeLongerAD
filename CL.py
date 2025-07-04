@@ -32,8 +32,10 @@ class CL_Transformer():
     on connection sparsity within Linear/Conv2d layers. Treats the final layer
     the same as internal layers regarding sparsity management.
     Grow strategy uses accumulated weight importance to select new connections.
+    Enhanced with Neighbor Mask strategy and Knowledge Distillation support.
     """
-    def __init__(self, model, device, sparsity_config, replace_percentage=0.2):
+    def __init__(self, model, device, sparsity_config, replace_percentage=0.2, 
+                 use_neighbor_mask=True, neighbor_radius=1, previous_task_grad_decay=0.05):
         """
         Initializes the Continual Learning manager.
 
@@ -45,7 +47,9 @@ class CL_Transformer():
                 - default_sparsity: Default connection sparsity for layers not specified otherwise.
                 - layer_specific: Sparsity override for specific layer names (use full names).
             replace_percentage (float, optional): Percentage of connections to drop and grow in each epoch. Defaults to 0.2.
-            # task_labels is removed as it's no longer used internally for reconstruction adaptation
+            use_neighbor_mask (bool): Whether to use neighbor mask strategy in grow method. Defaults to True.
+            neighbor_radius (int): Radius for neighbor mask strategy. Defaults to 1.
+            previous_task_grad_decay (float): Decay factor for previous task gradient protection. Defaults to 0.05.
         """
         self.model = model
         self.device = device
@@ -53,6 +57,14 @@ class CL_Transformer():
         self.replace_percentage = replace_percentage
         self.inf = float('inf') # Use standard float infinity
         self.current_task = 0 # Still needed to track task transitions for previous_mask
+        
+        # Enhanced features for knowledge preservation and transfer
+        self.use_neighbor_mask = use_neighbor_mask
+        self.neighbor_radius = neighbor_radius
+        self.previous_task_grad_decay = previous_task_grad_decay
+        self.knowledge_distillation_enabled = False
+        self.previous_task_outputs = {}
+        self.has_previous_knowledge = False  # Track if we have stored knowledge from previous tasks
 
         # --- Model Analysis ---
         self.learnable_layers = self._identify_learnable_layers() # 학습 가능한 레이어 식별
@@ -66,7 +78,10 @@ class CL_Transformer():
         self.weights_importance = {} # 가중치 중요도 (핵심 요소)
         self.removed_mask = {} # Drop 단계에서 제거된 마스크 (저장용)
         self.replace_count = {} # Drop/Grow 시 교체할 연결 수
-        # Removed last_layer_active_task
+        
+        # Enhanced state for neighbor mask and knowledge transfer
+        self.task_specific_masks = {} # Store masks for each task separately
+        self.connection_strength = {} # Track connection strength across tasks
 
         # Initialize state variables (masks will be created on self.device initially)
         self._initialize_state() # mask, previous_mask, importance 에 모두 zero initialize 
@@ -119,8 +134,6 @@ class CL_Transformer():
                  })
         return param_info
 
-    # Removed _find_classifier and _get_num_classes
-
     def _initialize_state(self):
         """Initializes masks, importance scores, and other state variables."""
         # Masks and importance scores are created on self.device
@@ -131,7 +144,9 @@ class CL_Transformer():
             self.mask[param_name] = torch.zeros_like(param.data, device=self.device)
             self.previous_mask[param_name] = torch.zeros_like(param.data, device=self.device)
             # Initialize importance scores on the initially specified device
-            self.weights_importance[param_name] = torch.zeros_like(param.data, device=self.device)        
+            self.weights_importance[param_name] = torch.zeros_like(param.data, device=self.device)
+            # Initialize enhanced state
+            self.connection_strength[param_name] = torch.zeros_like(param.data, device=self.device)
 
     def _get_connection_count(self, param_name):
         """Calculates the number of connections to keep for a parameter based on sparsity config."""
@@ -145,6 +160,28 @@ class CL_Transformer():
         sparsity = self.sparsity_config.get('layer_specific', {}).get(layer_name, self.sparsity_config.get('default_sparsity', 0.5))
         total_connections = param.numel()
         return int(total_connections * (1.0 - sparsity))
+
+    def _get_neighbor_mask(self, param_shape, selected_indices, radius=1):
+        """Generate neighbor mask for promoting local connectivity patterns."""
+        if len(param_shape) != 2:  # Only for Linear layers (2D weight matrices)
+            return torch.zeros(param_shape).bool().to(self.device)
+        
+        h, w = param_shape
+        neighbor_mask = torch.zeros(h, w).bool().to(self.device)
+        
+        # Convert flat indices to 2D coordinates
+        for flat_idx in selected_indices:
+            row = flat_idx // w
+            col = flat_idx % w
+            
+            # Add neighbors within radius
+            for dr in range(-radius, radius + 1):
+                for dc in range(-radius, radius + 1):
+                    nr, nc = row + dr, col + dc
+                    if 0 <= nr < h and 0 <= nc < w:
+                        neighbor_mask[nr, nc] = True
+        
+        return neighbor_mask
 
     # --- Masking and Sparsity ---
     def create_masks(self):
@@ -175,8 +212,21 @@ class CL_Transformer():
             num_to_select = min(num_to_select, num_available)
 
             if num_available > 0 and num_to_select > 0:
-                perm = torch.randperm(num_available, device=self.device)
-                selected_flat_indices = available_indices[perm[:num_to_select]]
+                # Enhanced selection strategy with connection strength consideration
+                if param_name in self.connection_strength and self.current_task > 0:
+                    # Use connection strength to bias selection towards promising areas
+                    strength_scores = self.connection_strength[param_name].flatten()[available_indices]
+                    # Add some randomness to avoid always selecting the same patterns
+                    noise = torch.randn_like(strength_scores) * 0.1
+                    combined_scores = strength_scores + noise
+                    _, sorted_indices = torch.sort(combined_scores, descending=True)
+                    selected_relative_indices = sorted_indices[:num_to_select]
+                    selected_flat_indices = available_indices[selected_relative_indices]
+                else:
+                    # Original random selection for first task
+                    perm = torch.randperm(num_available, device=self.device)
+                    selected_flat_indices = available_indices[perm[:num_to_select]]
+                
                 self.mask[param_name].view(-1)[selected_flat_indices] = 1.0
             elif num_to_select > 0:
                 print(f"  Param '{param_name}': Warning! Wanted {num_to_select} connections, but 0 were available in non-previous spots.")
@@ -195,7 +245,6 @@ class CL_Transformer():
                     self.mask[name] = current_mask
                 elif 'bias' in name: # Store initial bias too
                      self.init_weights[name] = copy.deepcopy(param.data)
-
 
     def save_old_tasks_weights(self):
         """Saves the current weights before an optimizer step."""
@@ -217,9 +266,8 @@ class CL_Transformer():
                         old_w = self.old_weights[name].to(param_device)
                         param.data[recover_mask] = old_w[recover_mask]
 
-
     def apply_mask_on_grad(self):
-        """Applies the current task's mask to gradients."""
+        """Applies the current task's mask to gradients with enhanced knowledge transfer."""
         for name, param in self.model.named_parameters():
             if param.grad is not None:
                 param_device = param.device
@@ -228,8 +276,11 @@ class CL_Transformer():
                     param.grad *= current_mask
                     
                 if name in self.previous_mask:
-                    protect = self.previous_mask[name].to(param.device)
-                    param.grad *= (1.0 - protect)                     
+                    protect = self.previous_mask[name].to(param_device)
+                    # Enhanced: Allow gradual adaptation of previous knowledge
+                    # Instead of complete protection (1.0 - protect), use decay factor
+                    adaptation_mask = 1.0 - protect + (protect * self.previous_task_grad_decay)
+                    param.grad *= adaptation_mask
 
     # --- Importance Calculation ---
     def reset_importance(self):
@@ -240,7 +291,6 @@ class CL_Transformer():
              param = info['param']
              self.weights_importance[param_name] = torch.zeros_like(param.data, device=param.device)
 
-
     def calculate_importance(self):
         """Calculates weight importance based on gradient and weight change."""
         for name, param in self.model.named_parameters():
@@ -249,9 +299,12 @@ class CL_Transformer():
                 old_weight = self.old_weights[name].to(param_device)
                 grad = param.grad.to(param_device)
                 current_mask = self.mask[name].to(param_device)
-                self.weights_importance[name] += abs(
-                    (param.data - old_weight) * grad * current_mask
-                )
+                importance_update = abs((param.data - old_weight) * grad * current_mask)
+                self.weights_importance[name] += importance_update
+                
+                # Update connection strength for future mask creation
+                if name in self.connection_strength:
+                    self.connection_strength[name] += importance_update * 0.1  # Accumulate with decay
 
     # --- Drop and Grow ---
 
@@ -311,11 +364,10 @@ class CL_Transformer():
                  self.removed_mask[param_name] = None
                  self.replace_count[param_name] = 0
 
-
     def grow(self):
-        """Grows new connections into available spots with high potential (based on weight importance)."""
+        """Enhanced grow method with Neighbor Mask strategy for promoting local connectivity."""
         with torch.no_grad():
-            # print("Growing connections...")
+            # print("Growing connections with Neighbor Mask strategy...")
             for info in self.param_info:
                 param_name = info['param_name']
 
@@ -323,7 +375,7 @@ class CL_Transformer():
                    self.replace_count[param_name] == 0 or \
                    param_name not in self.mask or \
                    param_name not in self.previous_mask or \
-                   param_name not in self.weights_importance: # Need importance score
+                   param_name not in self.weights_importance:
                     continue
 
                 num_to_add = self.replace_count[param_name]
@@ -332,37 +384,47 @@ class CL_Transformer():
                 # --- Find Available Locations and Calculate Potential ---
                 current_mask = self.mask[param_name].to(self.device)
                 prev_mask = self.previous_mask[param_name].to(self.device)
-                # Use absolute value of accumulated importance as potential score
                 potential_importance = abs(self.weights_importance[param_name]).to(self.device)
 
                 # Available = not current_mask AND not previous_mask
                 available_mask = (current_mask == 0) & (prev_mask == 0)
 
+                # Enhanced Neighbor Mask Strategy
+                if self.use_neighbor_mask and param_name in info['module'].__dict__ and len(current_mask.shape) == 2:
+                    # Get currently active connections
+                    active_indices = torch.where(current_mask.flatten() > 0)[0]
+                    
+                    if len(active_indices) > 0:
+                        # Generate neighbor mask around active connections
+                        neighbor_mask = self._get_neighbor_mask(
+                            current_mask.shape, active_indices, self.neighbor_radius
+                        )
+                        
+                        # Boost potential importance for neighbor locations
+                        neighbor_boost = neighbor_mask.float() * potential_importance.max() * 0.5
+                        potential_importance += neighbor_boost
+
                 # Mask potential importance where connections are not available
-                potential_importance[~available_mask] = -self.inf # Use negative infinity for non-available spots
+                potential_importance[~available_mask] = -self.inf
 
                 flat_potential = potential_importance.flatten()
 
                 # --- Select Top-k Potential Locations ---
                 indices_to_add_absolute = None
                 try:
-                    # Find number of valid (non -inf) potential locations
                     num_valid_to_grow = (flat_potential > -self.inf).sum().item()
                     k = min(num_to_add, max(0, num_valid_to_grow))
 
                     if k > 0:
-                        # Use topk with largest=True to find highest potential among available spots
                         _, indices_to_add_absolute = torch.topk(flat_potential, k, largest=True, sorted=False)
 
-                        # Check if topk returned valid indices
                         if not (flat_potential[indices_to_add_absolute] > -self.inf).all():
                              print(f"Warning: topk in grow for {param_name} returned indices pointing to non-finite values. Retrying with filter.")
-                             # Fallback: Filter finite values first
                              finite_mask_flat = torch.isfinite(flat_potential) & (flat_potential > -self.inf)
                              finite_indices = torch.where(finite_mask_flat)[0]
                              if len(finite_indices) >= k:
                                   finite_potentials = flat_potential[finite_indices]
-                                  k = min(k, len(finite_indices)) # Adjust k again just in case
+                                  k = min(k, len(finite_indices))
                                   if k > 0:
                                        _, topk_indices_relative = torch.topk(finite_potentials, k, largest=True)
                                        indices_to_add_absolute = finite_indices[topk_indices_relative]
@@ -391,14 +453,69 @@ class CL_Transformer():
                               new_connection_flat_mask[indices_to_add_absolute] = 1.0
                               new_connection_mask = new_connection_flat_mask.reshape(param_data.shape).bool()
                               param_data[new_connection_mask] = init_w[new_connection_mask]
-                              # print(f"  Grew and initialized {len(indices_to_add_absolute)} connections in {param_name} based on importance.")
                          else:
                               print(f"Warning: Cannot initialize new connections for {param_name} (shape mismatch).")
                     else:
                          print(f"Warning: Cannot initialize new connections for {param_name} (init_weights missing).")
-                # else:
-                    # print(f"  No valid spots to grow {k} connections in {param_name}.")
 
+    # --- Knowledge Distillation Support ---
+    def enable_knowledge_distillation(self):
+        """Enable knowledge distillation for cross-task knowledge transfer."""
+        self.knowledge_distillation_enabled = True
+        print("Knowledge distillation enabled for enhanced knowledge transfer.")
+
+    def store_previous_task_outputs(self, outputs):
+        """Store outputs from previous task for knowledge distillation."""
+        if self.knowledge_distillation_enabled:
+            # Store detached copies of outputs
+            self.previous_task_outputs = {}
+            for k, v in outputs.items():
+                if torch.is_tensor(v):
+                    self.previous_task_outputs[k] = v.detach().clone()
+            
+            # Mark that we have previous knowledge available
+            if self.previous_task_outputs:
+                self.has_previous_knowledge = True
+                print(f"Stored previous task outputs with keys: {list(self.previous_task_outputs.keys())}")
+
+    def get_distillation_loss(self, current_outputs, temperature=3.0, alpha=0.1):
+        """Calculate knowledge distillation loss between current and previous task outputs."""
+        if not self.knowledge_distillation_enabled or not self.has_previous_knowledge or not self.previous_task_outputs:
+            return torch.tensor(0.0, device=self.device)
+
+        distillation_loss = 0.0
+        count = 0
+        
+        print(f"Computing KD loss - Current outputs keys: {list(current_outputs.keys())}")
+        print(f"Previous outputs keys: {list(self.previous_task_outputs.keys())}")
+
+        for key in current_outputs:
+            if key in self.previous_task_outputs and torch.is_tensor(current_outputs[key]):
+                current = current_outputs[key]
+                previous = self.previous_task_outputs[key].to(current.device)
+                
+                if current.shape == previous.shape:
+                    # Use KL divergence for feature-level distillation
+                    current_flat = current.flatten(1)
+                    previous_flat = previous.flatten(1)
+                    
+                    # Apply softmax with temperature
+                    current_soft = F.log_softmax(current_flat / temperature, dim=1)
+                    previous_soft = F.softmax(previous_flat / temperature, dim=1)
+                    
+                    kl_loss = F.kl_div(current_soft, previous_soft, reduction='batchmean')
+                    weighted_loss = kl_loss * (temperature ** 2)
+                    distillation_loss += weighted_loss
+                    count += 1
+                    
+                    print(f"KD loss for {key}: {weighted_loss.item():.6f}")
+                else:
+                    print(f"Shape mismatch for {key}: current {current.shape} vs previous {previous.shape}")
+
+        final_loss = distillation_loss * alpha if count > 0 else torch.tensor(0.0, device=self.device)
+        print(f"Final KD loss: {final_loss.item():.6f} (from {count} feature matches)")
+        
+        return final_loss
 
     # --- Task Transition ---
     def prepare_next_task(self):
@@ -410,7 +527,15 @@ class CL_Transformer():
         return True
     
     def save_current_mask(self):
+        """Save current task mask and prepare for next task."""
         with torch.no_grad():
+            # Store task-specific mask before merging
+            task_mask = {}
+            for name in self.mask:
+                task_mask[name] = self.mask[name].clone()
+            self.task_specific_masks[self.current_task] = task_mask
+            
+            # Merge current mask into previous mask
             for name in self.mask:
                  current_mask = self.mask[name].to(self.device)
                  if name in self.previous_mask:
@@ -424,14 +549,12 @@ class CL_Transformer():
     def set_evaluation_mask(self):
         """Applies the accumulated mask (union of all task masks) for evaluation."""
         print("Applying accumulated mask (union of all tasks) for evaluation...")
-        self.model.eval() # Set model to evaluation mode
+        self.model.eval()
         with torch.no_grad():
             for name, param in self.model.named_parameters():
                 param_device = param.device
-                if name in self.previous_mask: # Only apply to parameters managed by CL
-                    # Get the accumulated mask (represents union of all learned connections)
+                if name in self.previous_mask:
                     accumulated_mask = self.previous_mask[name].to(param_device)
-                    # Apply the mask: zero out weights that were never used
                     param.data *= accumulated_mask
 
     def initialize_new_task_weights(self):

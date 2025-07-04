@@ -1,5 +1,6 @@
 import copy
 import importlib
+from collections.abc import Mapping
 
 import torch
 import torch.nn as nn
@@ -96,8 +97,17 @@ class CFGCAD(nn.Module):
                 module.train(mode)
         return self
     
-    def criterion(self, Outputs, Inputs, skip:bool = True):
-        loss = self._criterion(Outputs, Inputs, skip)
+    def criterion(self, outputs, inputs, skip: bool = True, cl_manager=None):
+        """
+        Enhanced criterion method with support for continual learning manager.
+        
+        Args:
+            outputs: Model outputs
+            inputs: Input data
+            skip: Skip flag for certain loss components
+            cl_manager: Continual learning manager for knowledge distillation
+        """
+        loss = self._criterion(outputs, inputs, skip, cl_manager)
         return loss
     
     

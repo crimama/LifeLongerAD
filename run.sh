@@ -31,8 +31,8 @@ elif [ "$exp_id" -eq 1051 ]; then
     dataset='mvtecad_1051'
     gpu_id=0
 elif [ "$exp_id" -eq 15 ]; then
-    method_setting="simplenet"
-    continual='false'
+    method_setting="cfgcad"
+    continual='true'
     exp='1_1_with_15_step'
     dataset='mvtecad_15'
     gpu_id=0
@@ -61,7 +61,7 @@ do
                     CUDA_VISIBLE_DEVICES=$gpu_id python main.py \
                         default_setting=./configs/default/$d.yaml \
                         model_setting=./configs/model/$m.yaml \
-                        DEFAULT.exp_name=sparse23_$cm-$exp \
+                        DEFAULT.exp_name=sparse30_$cm-$exp \
                         CONTINUAL.continual=$c \
                         CONTINUAL.method.name=$cm \
                         TRAIN.epochs=200 \

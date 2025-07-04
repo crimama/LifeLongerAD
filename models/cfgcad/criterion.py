@@ -1,5 +1,6 @@
 import torch.nn as nn
 import torch
+import torch.nn.functional as F
 
 from models.iuf.criterion import * 
 class IUFCriterion:    
@@ -23,28 +24,60 @@ class IUFCriterion:
 
         self.skip = skip         
         self.buffer_size = buffer_size 
+        
+        # Knowledge Distillation support
+        self.use_knowledge_distillation = False
+        self.distillation_temperature = 3.0
+        self.distillation_alpha = 0.1
             
-    def __call__(self, outputs: dict, inputs: dict, skip: bool):
+    def enable_knowledge_distillation(self, temperature=3.0, alpha=0.1):
+        """Enable knowledge distillation with specified parameters."""
+        self.use_knowledge_distillation = True
+        self.distillation_temperature = temperature
+        self.distillation_alpha = alpha
+        print(f"Knowledge distillation enabled: T={temperature}, α={alpha}")
+    
+    def __call__(self, outputs: dict, inputs: dict, skip: bool, cl_manager=None):
         """
         Args:
             outputs (dict): 모델의 forward 결과 (중간 디코더 특징, 분류 결과 등 포함)
             inputs (dict): 입력 데이터 딕셔너리 (예: "clslabel" 포함)
             skip (bool): SVD loss 가중치를 적용할지 여부 결정 플래그
+            cl_manager: Continual Learning manager instance for knowledge distillation
 
         Returns:
-            tuple: (전체 loss, feature_loss, class_loss, svd_loss)
+            dict: Dictionary containing various loss components
         """
         feature_loss = self._feature_loss(outputs) if 'FeatureMSELoss' in self.criterion_list else 0 
 
-        svd_loss = self._svd_loss(outputs) *10 if 'SVDLoss' in self.criterion_list else 0 
+        svd_loss = self._svd_loss(outputs) * 10 if 'SVDLoss' in self.criterion_list else 0 
+        
+        # Knowledge Distillation Loss
+        distillation_loss = 0
+        if self.use_knowledge_distillation and cl_manager is not None:
+            try:
+                distillation_loss = cl_manager.get_distillation_loss(
+                    outputs, 
+                    temperature=self.distillation_temperature,
+                    alpha=self.distillation_alpha
+                )
+                if torch.is_tensor(distillation_loss) and distillation_loss.item() > 0:
+                    print(f"✓ Knowledge distillation active: {distillation_loss.item():.6f}")
+            except Exception as e:
+                print(f"Warning: Knowledge distillation failed: {e}")
+                distillation_loss = torch.tensor(0.0)
+        elif self.use_knowledge_distillation and cl_manager is None:
+            print("Warning: KD enabled but no cl_manager provided")
+        elif not self.use_knowledge_distillation:
+            print("Info: Knowledge distillation is disabled")
 
         # 전체 loss 계산 (skip 플래그에 따라 SVD 손실 가중치 적용)
-        loss = feature_loss + svd_loss 
+        loss = feature_loss + svd_loss + distillation_loss
 
-
-        return {'loss':loss,
-                'feature_loss':feature_loss.item(),
-                'svd_loss':svd_loss.item() 
+        return {'loss': loss,
+                'feature_loss': feature_loss.item() if torch.is_tensor(feature_loss) else feature_loss,
+                'svd_loss': svd_loss.item() if torch.is_tensor(svd_loss) else svd_loss,
+                'distillation_loss': distillation_loss.item() if torch.is_tensor(distillation_loss) else distillation_loss
                 }
 
     def _feature_loss(self, outputs: dict):
@@ -123,6 +156,42 @@ class ImageMSELoss(nn.Module):
 class CELoss(nn.CrossEntropyLoss):
     def __init__(self):
         super(CELoss,self).__init__()
+
+class KnowledgeDistillationLoss(nn.Module):
+    """Knowledge Distillation Loss for cross-task knowledge transfer"""
+    
+    def __init__(self, temperature=3.0, alpha=0.1):
+        super().__init__()
+        self.temperature = temperature
+        self.alpha = alpha
+        
+    def forward(self, student_outputs, teacher_outputs):
+        """
+        Args:
+            student_outputs: Current task model outputs
+            teacher_outputs: Previous task model outputs (detached)
+        """
+        if not teacher_outputs:
+            return torch.tensor(0.0, device=next(iter(student_outputs.values())).device)
+        
+        distillation_loss = 0.0
+        count = 0
+        
+        for key in student_outputs:
+            if key in teacher_outputs and torch.is_tensor(student_outputs[key]):
+                student = student_outputs[key]
+                teacher = teacher_outputs[key].to(student.device)
+                
+                if student.shape == teacher.shape:
+                    # Feature-level distillation using KL divergence
+                    student_soft = F.log_softmax(student.flatten(1) / self.temperature, dim=1)
+                    teacher_soft = F.softmax(teacher.flatten(1) / self.temperature, dim=1)
+                    
+                    kl_loss = F.kl_div(student_soft, teacher_soft, reduction='batchmean')
+                    distillation_loss += kl_loss * (self.temperature ** 2)
+                    count += 1
+        
+        return distillation_loss * self.alpha if count > 0 else torch.tensor(0.0)
         
 class SVDLoss(nn.Module):
     def __init__(self):
