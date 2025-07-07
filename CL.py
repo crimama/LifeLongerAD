@@ -26,14 +26,7 @@ import math
 from collections.abc import Mapping # Import Mapping for type checking in to_device if needed
 
 class CL_Transformer():
-    """
-    Continual Learning class adapted for Transformer-like architectures and reconstruction tasks.
-    Applies dynamic sparse training principles inspired by SpaceNet, focusing
-    on connection sparsity within Linear/Conv2d layers. Treats the final layer
-    the same as internal layers regarding sparsity management.
-    Grow strategy uses accumulated weight importance to select new connections.
-    Enhanced with Neighbor Mask strategy and Knowledge Distillation support.
-    """
+
     def __init__(self, model, device, sparsity_config, replace_percentage=0.2, 
                  use_neighbor_mask=True, neighbor_radius=1, previous_task_grad_decay=0.05):
         """
