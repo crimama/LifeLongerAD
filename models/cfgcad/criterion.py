@@ -57,7 +57,8 @@ class IUFCriterion:
         if self.use_knowledge_distillation and cl_manager is not None:
             try:
                 distillation_loss = cl_manager.get_distillation_loss(
-                    outputs, 
+                    student_outputs=outputs, 
+                    inputs=inputs,
                     temperature=self.distillation_temperature,
                     alpha=self.distillation_alpha
                 )

@@ -63,7 +63,7 @@ class CL_Transformer():
         self.neighbor_radius = neighbor_radius
         self.previous_task_grad_decay = previous_task_grad_decay
         self.knowledge_distillation_enabled = False
-        self.previous_task_outputs = {}
+        self.teacher_model = None  # Store teacher model (deepcopy of previous task model)
         self.has_previous_knowledge = False  # Track if we have stored knowledge from previous tasks
 
         # --- Model Analysis ---
@@ -462,60 +462,107 @@ class CL_Transformer():
     def enable_knowledge_distillation(self):
         """Enable knowledge distillation for cross-task knowledge transfer."""
         self.knowledge_distillation_enabled = True
-        print("Knowledge distillation enabled for enhanced knowledge transfer.")
+        print("Knowledge distillation enabled for enhanced knowledge transfer using teacher model.")
 
-    def store_previous_task_outputs(self, outputs):
-        """Store outputs from previous task for knowledge distillation."""
+    def save_teacher_model(self):
+        """Save current model as teacher model for knowledge distillation."""
         if self.knowledge_distillation_enabled:
-            # Store detached copies of outputs
-            self.previous_task_outputs = {}
-            for k, v in outputs.items():
-                if torch.is_tensor(v):
-                    self.previous_task_outputs[k] = v.detach().clone()
+            print("Saving current model as teacher model...")
+            # Create a deep copy of the current model
+            self.teacher_model = copy.deepcopy(self.model)
+            self.teacher_model.eval()  # Set teacher to evaluation mode
             
-            # Mark that we have previous knowledge available
-            if self.previous_task_outputs:
-                self.has_previous_knowledge = True
-                print(f"Stored previous task outputs with keys: {list(self.previous_task_outputs.keys())}")
+            # Move teacher to the same device as the student model
+            self.teacher_model = self.teacher_model.to(self.device)
+            
+            # Freeze teacher model parameters
+            for param in self.teacher_model.parameters():
+                param.requires_grad = False
+            
+            self.has_previous_knowledge = True
+            print("Teacher model saved and frozen for knowledge distillation.")
 
-    def get_distillation_loss(self, current_outputs, temperature=3.0, alpha=0.1):
-        """Calculate knowledge distillation loss between current and previous task outputs."""
-        if not self.knowledge_distillation_enabled or not self.has_previous_knowledge or not self.previous_task_outputs:
+    def get_teacher_outputs(self, inputs):
+        """Get outputs from teacher model for knowledge distillation."""
+        if not self.knowledge_distillation_enabled or self.teacher_model is None:
+            return None
+        
+        with torch.no_grad():
+            self.teacher_model.eval()
+            teacher_outputs = self.teacher_model(inputs)
+        
+        return teacher_outputs
+
+    def get_distillation_loss(self, student_outputs, inputs, temperature=3.0, alpha=0.1):
+        """Calculate knowledge distillation loss between student and teacher outputs."""
+        if not self.knowledge_distillation_enabled or not self.has_previous_knowledge or self.teacher_model is None:
+            return torch.tensor(0.0, device=self.device)
+
+        # Get teacher outputs
+        teacher_outputs = self.get_teacher_outputs(inputs)
+        if teacher_outputs is None:
             return torch.tensor(0.0, device=self.device)
 
         distillation_loss = 0.0
         count = 0
         
-        print(f"Computing KD loss - Current outputs keys: {list(current_outputs.keys())}")
-        print(f"Previous outputs keys: {list(self.previous_task_outputs.keys())}")
+        print(f"Computing KD loss between student and teacher models")
 
-        for key in current_outputs:
-            if key in self.previous_task_outputs and torch.is_tensor(current_outputs[key]):
-                current = current_outputs[key]
-                previous = self.previous_task_outputs[key].to(current.device)
-                
-                if current.shape == previous.shape:
-                    # Use KL divergence for feature-level distillation
-                    current_flat = current.flatten(1)
-                    previous_flat = previous.flatten(1)
+        # Handle different output types
+        if isinstance(student_outputs, dict) and isinstance(teacher_outputs, dict):
+            # Dictionary outputs - compare matching keys
+            for key in student_outputs:
+                if key in teacher_outputs and torch.is_tensor(student_outputs[key]) and torch.is_tensor(teacher_outputs[key]):
+                    student_output = student_outputs[key]
+                    teacher_output = teacher_outputs[key]
                     
-                    # Apply softmax with temperature
-                    current_soft = F.log_softmax(current_flat / temperature, dim=1)
-                    previous_soft = F.softmax(previous_flat / temperature, dim=1)
-                    
-                    kl_loss = F.kl_div(current_soft, previous_soft, reduction='batchmean')
-                    weighted_loss = kl_loss * (temperature ** 2)
-                    distillation_loss += weighted_loss
-                    count += 1
-                    
-                    print(f"KD loss for {key}: {weighted_loss.item():.6f}")
-                else:
-                    print(f"Shape mismatch for {key}: current {current.shape} vs previous {previous.shape}")
+                    if student_output.shape == teacher_output.shape:
+                        # Calculate KL divergence loss
+                        kl_loss = self._calculate_kl_loss(student_output, teacher_output, temperature)
+                        distillation_loss += kl_loss
+                        count += 1
+                        print(f"KD loss for {key}: {kl_loss.item():.6f}")
+                    else:
+                        print(f"Shape mismatch for {key}: student {student_output.shape} vs teacher {teacher_output.shape}")
+        
+        elif torch.is_tensor(student_outputs) and torch.is_tensor(teacher_outputs):
+            # Tensor outputs - direct comparison
+            if student_outputs.shape == teacher_outputs.shape:
+                kl_loss = self._calculate_kl_loss(student_outputs, teacher_outputs, temperature)
+                distillation_loss += kl_loss
+                count += 1
+                print(f"KD loss: {kl_loss.item():.6f}")
+            else:
+                print(f"Shape mismatch: student {student_outputs.shape} vs teacher {teacher_outputs.shape}")
+        
+        else:
+            print("Unsupported output types for knowledge distillation")
+            return torch.tensor(0.0, device=self.device)
 
         final_loss = distillation_loss * alpha if count > 0 else torch.tensor(0.0, device=self.device)
         print(f"Final KD loss: {final_loss.item():.6f} (from {count} feature matches)")
         
         return final_loss
+
+    def _calculate_kl_loss(self, student_output, teacher_output, temperature):
+        """Calculate KL divergence loss between student and teacher outputs."""
+        # Flatten outputs if they have more than 2 dimensions
+        if student_output.dim() > 2:
+            student_flat = student_output.flatten(1)
+            teacher_flat = teacher_output.flatten(1)
+        else:
+            student_flat = student_output
+            teacher_flat = teacher_output
+        
+        # Apply softmax with temperature
+        student_soft = F.log_softmax(student_flat / temperature, dim=1)
+        teacher_soft = F.softmax(teacher_flat / temperature, dim=1)
+        
+        # Calculate KL divergence
+        kl_loss = F.kl_div(student_soft, teacher_soft, reduction='batchmean')
+        
+        # Scale by temperature squared
+        return kl_loss * (temperature ** 2)
 
     # --- Task Transition ---
     def prepare_next_task(self):
@@ -534,6 +581,10 @@ class CL_Transformer():
             for name in self.mask:
                 task_mask[name] = self.mask[name].clone()
             self.task_specific_masks[self.current_task] = task_mask
+            
+            # Save current model as teacher before moving to next task
+            if self.knowledge_distillation_enabled:
+                self.save_teacher_model()
             
             # Merge current mask into previous mask
             for name in self.mask:

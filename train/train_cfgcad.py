@@ -225,27 +225,24 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
             
             outputs = model(Input) 
             
-            # Enhanced Knowledge Distillation Logic
-            if cl_manager.knowledge_distillation_enabled:
-                # For the first few steps, just store outputs without distillation
-                if step == 0 and epoch == 0:
-                    # Store initial outputs for future distillation
-                    cl_manager.store_previous_task_outputs(outputs)
-                    print("Stored initial outputs for knowledge distillation")
-                elif step > 0 or epoch > 0:
-                    # After the first step, we can start using KD
-                    if not cl_manager.has_previous_knowledge:
-                        # This should not happen, but just in case
-                        cl_manager.store_previous_task_outputs(outputs)
-                    # Store current outputs for next iteration (updating previous knowledge)
-                    # We'll update after loss calculation to maintain consistency
+            # Enhanced Knowledge Distillation Logic using teacher model
+            distillation_loss = 0.0
+            if cl_manager.knowledge_distillation_enabled and cl_manager.has_previous_knowledge:
+                # Calculate knowledge distillation loss using teacher model
+                distillation_loss = cl_manager.get_distillation_loss(
+                    student_outputs=outputs, 
+                    inputs=Input,
+                    temperature=cfg.CONTINUAL.get('kd_temperature', 3.0),
+                    alpha=cfg.CONTINUAL.get('kd_alpha', 0.1)
+                )
             
             # Calculate loss with knowledge distillation support
             loss = model.criterion(outputs, Input, skip=False, cl_manager=cl_manager)
             
-            # Update previous task outputs for next iteration (if KD is enabled and we're past first step)
-            if cl_manager.knowledge_distillation_enabled and (step > 0 or epoch > 0):
-                cl_manager.store_previous_task_outputs(outputs)
+            # Add distillation loss to total loss if available
+            if distillation_loss > 0:
+                loss['loss'] = loss['loss'] + distillation_loss
+                loss['distillation_loss'] = distillation_loss.item()
             
             optimizer.zero_grad()
             accelerator.backward(loss['loss'])         
@@ -401,22 +398,9 @@ def fit(
             cl_manager.enable_knowledge_distillation()
             print(f"✓ CL Manager KD enabled: {cl_manager.knowledge_distillation_enabled}")
             
-            # Enable knowledge distillation in criterion as well
-            if hasattr(model, '_criterion'):
-                model._criterion.enable_knowledge_distillation(
-                    temperature=cfg.CONTINUAL.get('kd_temperature', 3.0),
-                    alpha=cfg.CONTINUAL.get('kd_alpha', 0.1)
-                )
-                print(f"✓ Criterion KD enabled: {model._criterion.use_knowledge_distillation}")
-            elif hasattr(model, 'criterion'):
-                # Try alternate attribute name
-                model.criterion.enable_knowledge_distillation(
-                    temperature=cfg.CONTINUAL.get('kd_temperature', 3.0),
-                    alpha=cfg.CONTINUAL.get('kd_alpha', 0.1)
-                )
-                print(f"✓ Criterion KD enabled: {model.criterion.use_knowledge_distillation}")
-            else:
-                print("Warning: Could not find criterion in model to enable KD")
+            # Note: The criterion knowledge distillation is handled within the CL manager
+            # No need to call enable_knowledge_distillation on criterion separately
+            print(f"✓ Knowledge distillation will be handled by CL Manager")
         else:
             print("Info: Knowledge distillation disabled by config")
         
@@ -524,17 +508,10 @@ def fit(
                     # Enhanced Continual method with knowledge preservation
                     _logger.info('Enhanced Continual Learning consolidation with knowledge preservation')            
                     
-                    # Store representative outputs for knowledge distillation before task transition
+                    # Save current model as teacher before task transition (if KD is enabled)
                     if cl_manager.knowledge_distillation_enabled:
-                        with torch.no_grad():
-                            model.eval()
-                            # Generate representative outputs for the current task
-                            sample_batch = next(iter(trainloader))
-                            sample_input = {'image': sample_batch[0][:4], 'clslabel': sample_batch[2][:4]}  # Use 4 samples
-                            sample_outputs = model(sample_input)
-                            cl_manager.store_previous_task_outputs(sample_outputs)
-                            print(f"Stored representative outputs for task {current_class_name} before task transition")
-                            model.train()
+                        cl_manager.save_teacher_model()
+                        print(f"Saved teacher model for task {current_class_name} before task transition")
                     
                     # prepare evaluation with enhanced mask management
                     cl_manager.save_current_mask()  # Now stores task-specific masks
