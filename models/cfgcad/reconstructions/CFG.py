@@ -123,7 +123,9 @@ class CFGReconstruction(nn.Module):
                 # This is a simplified version - you may need to adapt based on your specific transformer architecture
                 prompt_expanded = prompt.unsqueeze(1).expand(-1, src.size(1), -1)  # Expand to match sequence length
                 src = src + prompt_expanded * 0.1  # Add prompt with small weight
-                print(f"✓ PGPT: Prompt injected into transformer input")
+                # Reduce debug prints - only print occasionally during training
+                if torch.rand(1).item() < 0.01:  # Only 1% chance to print
+                    print(f"✓ PGPT: Prompt injected into transformer input")
             
             output_decoder, _ = self.transformer(src, pos_embed) # mask 인자 필요시 추가
             middle_decoder_feature=output_decoder[0:3,...]
@@ -168,7 +170,9 @@ class CFGReconstruction(nn.Module):
             if prompt is not None:
                 prompt_expanded = prompt.unsqueeze(1).expand(-1, features_uncond.size(1), -1)
                 features_uncond = features_uncond + prompt_expanded * 0.1
-                print(f"✓ PGPT: Prompt injected during inference")
+                # Reduce debug prints during inference
+                if torch.rand(1).item() < 0.05:  # Only 5% chance to print during inference
+                    print(f"✓ PGPT: Prompt injected during inference")
             
             rec_tokens, _ = self.transformer(features_uncond, pos_embed) # L, B, C
             rec_tokens = rec_tokens[3] 

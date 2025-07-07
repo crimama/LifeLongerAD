@@ -125,7 +125,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
             _logger.warning(f"Failed to collect gradients: {e}")
     
     def log_training_info(step, accelerator, dataloader, epoch, epochs,
-                      losses_m, feature_losses_m, svd_losses_m, distillation_losses_m,
+                      losses_m, feature_losses_m, svd_losses_m,
                       optimizer, batch_time_m, data_time_m, images, wandb_use:bool = False):
         try:
             current_step = (step + 1) // accelerator.gradient_accumulation_steps
@@ -135,7 +135,6 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
                 'Total Loss: {loss_val:>6.4f} | '
                 'Feature Loss: {feature_loss_val:>6.4f} | '            
                 'SVD Loss: {svd_loss_val:>6.4f} | '
-                'KD Loss: {kd_loss_val:>6.4f} | '
                 'LR: {lr:.3e} | '
                 'Time: {batch_time_avg:.3f}s, {rate_avg:>3.2f}/s | '
                 'Data: {data_time_avg:.3f}s'.format(
@@ -146,7 +145,6 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
                     loss_val=losses_m.val,
                     feature_loss_val=feature_losses_m.val,
                     svd_loss_val=svd_losses_m.val,
-                    kd_loss_val=distillation_losses_m.val,
                     lr=optimizer.param_groups[0]['lr'],
                     batch_time_avg=batch_time_m.avg,
                     rate_avg=images[0].size(0) / batch_time_m.avg,
@@ -160,7 +158,6 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
                     'Train/Total Loss': losses_m.avg,
                     'Train/Feature Loss': feature_losses_m.avg,
                     'Train/SVD Loss': svd_losses_m.avg,
-                    'Train/KD Loss': distillation_losses_m.avg,
                     'Train/Learning Rate': optimizer.param_groups[0]['lr'],
                     'Time/Train Batch Average (s)': batch_time_m.avg,
                     'Time/Processing Rate (img/s)': images[0].size(0) / batch_time_m.avg,
@@ -168,21 +165,20 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
                     'Train/Total Loss (val)': losses_m.val,
                     'Train/Feature Loss (val)': feature_losses_m.val,
                     'Train/SVD Loss (val)': svd_losses_m.val,
-                    'Train/KD Loss (val)': distillation_losses_m.val,
                 }
                 safe_wandb_log(metrics)
         except Exception as e:
             _logger.error(f"Logging failed: {e}")
 
     
-    def do_online_inference(cfg, step, dataloader, model, accelerator, savedir, epoch, testloader, current_class_name, batch_time_m, optimizer):
+    def do_online_inference(cfg, step, dataloader, model, accelerator, savedir, epoch, testloader, current_class_name, batch_time_m, optimizer, cl_manager):
         try:
             if ((cfg.CONTINUAL.online and (step % 10 == 0)) or (step == len(dataloader) - 1)):
                 test_metrics = test(
                     model=model, device=accelerator.device, savedir=savedir, use_wandb=False,
                     epoch=step if cfg.CONTINUAL.online else step*epoch, optimizer=optimizer,
                     epoch_time_m=batch_time_m, class_name=current_class_name,
-                    current_class_name=current_class_name, dataloader=testloader
+                    current_class_name=current_class_name, dataloader=testloader, cl_manager=cl_manager
                 )
         except Exception as e:
             _logger.warning(f"Online inference failed: {e}")
@@ -203,7 +199,6 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
     losses_m = AverageMeter()
     feature_losses_m = AverageMeter()
     svd_losses_m = AverageMeter()
-    distillation_losses_m = AverageMeter()
     
     current_class_name = dataloader.dataset.class_name
     model.train()
@@ -227,30 +222,17 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
                     # Use the first prompt for simplicity
                     prompt = prompts[0]
                     Input = cl_manager.inject_prompt_into_model(prompt, Input)
+                    # Reduce debug prints during training - only print occasionally
+                    if step % 50 == 0:  # Only print every 50 steps
+                        print(f"✓ PGPT: Using prompt for class '{cl_manager.current_class_name}'")
             
             # Training with Enhanced Continual Learning
             cl_manager.save_old_tasks_weights() # 가중치 저장
             
             outputs = model(Input) 
             
-            # Enhanced Knowledge Distillation Logic using teacher model
-            distillation_loss = 0.0
-            if cl_manager.knowledge_distillation_enabled and cl_manager.has_previous_knowledge:
-                # Calculate knowledge distillation loss using teacher model
-                distillation_loss = cl_manager.get_distillation_loss(
-                    student_outputs=outputs, 
-                    inputs=Input,
-                    temperature=cfg.CONTINUAL.get('kd_temperature', 3.0),
-                    alpha=cfg.CONTINUAL.get('kd_alpha', 0.1)
-                )
-            
-            # Calculate loss with knowledge distillation support
+            # Calculate loss
             loss = model.criterion(outputs, Input, skip=False, cl_manager=cl_manager)
-            
-            # Add distillation loss to total loss if available
-            if distillation_loss > 0:
-                loss['loss'] = loss['loss'] + distillation_loss
-                loss['distillation_loss'] = distillation_loss.item()
             
             optimizer.zero_grad()
             accelerator.backward(loss['loss'])         
@@ -259,11 +241,8 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
             losses_m.update(loss['loss'].item())
             feature_losses_m.update(loss['feature_loss'])
             svd_losses_m.update(loss['svd_loss'])
-            distillation_losses_m.update(loss.get('distillation_loss', 0))
             
-            cl_manager.apply_mask_on_grad() # 향상된 그래디언트 마스크 적용 (점진적 적응 포함)
             optimizer.step()
-            cl_manager.calculate_importance() # 중요도 계산 (연결 강도 업데이트 포함)
             cl_manager.recover_old_tasks_weights() # 이전 작업 가중치 복구
             
             batch_time_m.update(time.time() - end)        
@@ -271,14 +250,14 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
             adjusted_log_interval = log_interval if cfg.CONTINUAL.online else 1
             if (step + 1) % adjusted_log_interval == 0:
                 log_training_info(step, accelerator, dataloader, epoch, epochs, 
-                                losses_m, feature_losses_m, svd_losses_m, distillation_losses_m,
+                                losses_m, feature_losses_m, svd_losses_m,
                                 optimizer, batch_time_m, data_time_m, images, wandb_use=cfg.TRAIN.wandb.use)
                 
                 # Check resources periodically
                 if (step + 1) % (adjusted_log_interval * 5) == 0:
                     check_system_resources()
                 
-            # do_online_inference(cfg, step, dataloader, model, accelerator, savedir, epoch, testloader, current_class_name, batch_time_m, optimizer)
+            do_online_inference(cfg, step, dataloader, model, accelerator, savedir, epoch, testloader, current_class_name, batch_time_m, optimizer, cl_manager)
             end = time.time()
             
         except Exception as e:
@@ -291,7 +270,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
 
 def test(model, dataloader, device, 
          savedir, use_wandb, epoch, optimizer, epoch_time_m, class_name, current_class_name,
-         last : bool = False) -> dict:
+         cl_manager=None, last : bool = False) -> dict:
     try:
         from utils.metrics import MetricCalculator, loco_auroc    
         model.eval()
@@ -312,7 +291,7 @@ def test(model, dataloader, device,
                 Input = {'image':images,'clsname':class_labels}
                 
                 # PGPT: Select prompt using K-NN during inference
-                if cl_manager.use_pgpt:
+                if cl_manager is not None and cl_manager.use_pgpt:
                     # Extract features for prompt selection
                     if hasattr(model, 'backbone'):
                         features = model.backbone(images)
@@ -329,7 +308,9 @@ def test(model, dataloader, device,
                     prompt, selected_class = cl_manager.select_prompt_by_knn(features)
                     if prompt is not None:
                         Input = cl_manager.inject_prompt_into_model(prompt, Input)
-                        print(f"✓ PGPT: Selected prompt for class '{selected_class}' during inference")
+                        # Reduce debug prints during testing
+                        if idx % 10 == 0:  # Only print every 10th batch
+                            print(f"✓ PGPT: Selected prompt for class '{selected_class}' during inference")
                 
                 outputs = model(Input)   
                 score_map = outputs['pred'].detach().cpu()            
@@ -343,7 +324,15 @@ def test(model, dataloader, device,
             end = time.time()
                 
         i_results, p_results = img_level.compute(), pix_level.compute()
-        _logger.info(f"Current Class name : {current_class_name} Class name : {class_name} Image AUROC: {i_results['auroc']:.3f}| Pixel AUROC: {p_results['auroc']:.3f}")
+        _logger.info("=" * 60)
+        _logger.info(f"METRICS - Current Class: {current_class_name} | Target Class: {class_name}")
+        _logger.info(f"Image AUROC: {i_results['auroc']:.3f} | Pixel AUROC: {p_results['auroc']:.3f}")
+        
+        # PGPT: Add PGPT status to metric logging if enabled
+        if cl_manager is not None and cl_manager.use_pgpt:
+            _logger.info(f"PGPT Status: {len(cl_manager.prompt_pool)} classes with prompts, {len(cl_manager.prototype_repository)} prototypes calculated")
+        
+        _logger.info("=" * 60)
             
         test_result = OrderedDict(img_level = i_results)
         test_result.update([('pix_level', p_results)])
@@ -407,17 +396,11 @@ def fit(
                 raise
             
         ## Enhanced Continual Learning Configuration
-        sparsity_config = cfg.CONTINUAL.method.params        
         
         # Initialize enhanced CL manager with new features
         cl_manager = CL_Transformer(
             model=model, 
             device=accelerator.device, 
-            sparsity_config=sparsity_config, 
-            replace_percentage=0.2,
-            use_neighbor_mask=cfg.CONTINUAL.get('use_neighbor_mask', True),
-            neighbor_radius=cfg.CONTINUAL.get('neighbor_radius', 1),
-            previous_task_grad_decay=cfg.CONTINUAL.get('previous_task_grad_decay', 0.05),
             use_pgpt=cfg.CONTINUAL.get('use_pgpt', False),
             prompt_dim=cfg.CONTINUAL.get('prompt_dim', 256),
             num_prompts_per_class=cfg.CONTINUAL.get('num_prompts_per_class', 1),
@@ -426,19 +409,8 @@ def fit(
         
         cl_manager.set_init_network_weight()
         
-        # Enable knowledge distillation if configured
-        if cfg.CONTINUAL.get('use_knowledge_distillation', True):
-            cl_manager.enable_knowledge_distillation()
-            print(f"✓ CL Manager KD enabled: {cl_manager.knowledge_distillation_enabled}")
-            
-            # Note: The criterion knowledge distillation is handled within the CL manager
-            # No need to call enable_knowledge_distillation on criterion separately
-            print(f"✓ Knowledge distillation will be handled by CL Manager")
-        else:
-            print("Info: Knowledge distillation disabled by config")
-        
         epoch_time_m = AverageMeter()
-        end = time.time() 
+        end = time.time()
 
         optimizer = __import__('torch.optim',fromlist='optim').__dict__[cfg.OPTIMIZER.opt_name](model.parameters(), lr=cfg.OPTIMIZER.lr, **cfg.OPTIMIZER.params)        
         if cfg.SCHEDULER.name is not None:                        
@@ -459,7 +431,7 @@ def fit(
             if cl_manager.use_pgpt:
                 cl_manager.initialize_prompt_for_class(current_class_name)
                 cl_manager.set_current_class(current_class_name)
-                print(f"✓ PGPT: Initialized prompts for class '{current_class_name}'")
+                _logger.info(f"PGPT: Initialized prompts for class '{current_class_name}'")
             
             best_score = 0.0
             if (n_task == 0) or (cfg.CONTINUAL.continual==False):
@@ -467,9 +439,7 @@ def fit(
             
             cleanup_gpu_memory()
             _logger.info(f"Current Class Name : {current_class_name}")        
-            _logger.info(f"Enhanced CL Features: Neighbor Mask={cl_manager.use_neighbor_mask}, "
-                        f"KD={cl_manager.knowledge_distillation_enabled}, "
-                        f"Grad Decay={cl_manager.previous_task_grad_decay}")
+            _logger.info(f"Enhanced CL Features: PGPT={cl_manager.use_pgpt}")
                 
             # Init optimzier & SCheduler         
             # Init Dataloader 
@@ -508,12 +478,6 @@ def fit(
                         epoch_time_m.update(time.time() - end)
                         end = time.time()
                         
-                    # Enhanced Drop/Grow with Neighbor Mask Strategy
-                    if epoch < epochs - 1:
-                        _logger.info(f"Applying enhanced Drop/Grow with Neighbor Mask (radius={cl_manager.neighbor_radius})")
-                        cl_manager.drop()
-                        cl_manager.grow()  # Now includes neighbor mask strategy
-                        
                     if (epoch%2 == 0) or (epoch%199 == 0): 
                         test_metrics = test(
                             model              = model, 
@@ -525,7 +489,8 @@ def fit(
                             optimizer          = optimizer,
                             epoch_time_m       = epoch_time_m, 
                             class_name         = current_class_name,
-                            current_class_name = current_class_name
+                            current_class_name = current_class_name,
+                            cl_manager         = cl_manager
                         )
                                 
                 
@@ -544,17 +509,6 @@ def fit(
         
             if cfg.CONTINUAL.continual:
                 try:
-                    # Enhanced Continual method with knowledge preservation
-                    _logger.info('Enhanced Continual Learning consolidation with knowledge preservation')            
-                    
-                    # Save current model as teacher before task transition (if KD is enabled)
-                    if cl_manager.knowledge_distillation_enabled:
-                        cl_manager.save_teacher_model()
-                        print(f"Saved teacher model for task {current_class_name} before task transition")
-                    
-                    # prepare evaluation with enhanced mask management
-                    cl_manager.save_current_mask()  # Now stores task-specific masks
-                    cl_manager.set_evaluation_mask()
                     
                     # Enhanced Continual evaluation with detailed logging
                     num_start = 0 
@@ -577,12 +531,12 @@ def fit(
                                         device             = accelerator.device,
                                         savedir            = savedir, 
                                         use_wandb          = use_wandb,
-                                        epoch              = 0 if epochs == 0 else epoch,
+                                        epoch              = epochs - 1 if epochs > 0 else 0,  # Use final epoch number
                                         optimizer          = optimizer, 
                                         epoch_time_m       = epoch_time_m,
                                         class_name         = trainloader.dataset.class_name,
                                         current_class_name = current_class_name,
-                                        dataloader         = testloader,
+                                        cl_manager         = cl_manager,
                                         last               = True
                                     )
                     if n_task < len(loader_dict) - 1:
@@ -606,7 +560,16 @@ def fit(
             if cl_manager.use_pgpt:
                 try:
                     cl_manager.calculate_prototype(trainloader, current_class_name)
-                    print(f"✓ PGPT: Prototype calculated for class '{current_class_name}'")
+                    _logger.info(f"PGPT: Prototype calculated for class '{current_class_name}'")
+                    
+                    # Add PGPT summary at the end of each task
+                    _logger.info("=" * 40)
+                    _logger.info("PGPT SUMMARY")
+                    _logger.info(f"Total classes with prompts: {len(cl_manager.prompt_pool)}")
+                    _logger.info(f"Total prototypes calculated: {len(cl_manager.prototype_repository)}")
+                    _logger.info(f"Current task: {n_task + 1}/{len(loader_dict)}")
+                    _logger.info("=" * 40)
+                    
                 except Exception as e:
                     _logger.error(f"PGPT prototype calculation failed for '{current_class_name}': {e}")
                     
