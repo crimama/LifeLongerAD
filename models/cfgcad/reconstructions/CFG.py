@@ -106,6 +106,10 @@ class CFGReconstruction(nn.Module):
         
     def forward(self, input, task_id=None):
         feature_align = input["feature_align"]  # B x C X H x W #? MFCN에서 size 맞춰준 feature
+        
+        # PGPT: Handle prompt injection if provided
+        prompt = input.get('prompt', None)
+        
         src, pos_embed = self.forward_pre(feature_align)
         device = feature_align.device
         if self.training:
@@ -113,6 +117,14 @@ class CFGReconstruction(nn.Module):
             B = feature_align.shape[0]            
                                     
             #! --- Single pass through Transformer ---
+            # PGPT: Inject prompt if available
+            if prompt is not None:
+                # Modify the transformer input to include the prompt
+                # This is a simplified version - you may need to adapt based on your specific transformer architecture
+                prompt_expanded = prompt.unsqueeze(1).expand(-1, src.size(1), -1)  # Expand to match sequence length
+                src = src + prompt_expanded * 0.1  # Add prompt with small weight
+                print(f"✓ PGPT: Prompt injected into transformer input")
+            
             output_decoder, _ = self.transformer(src, pos_embed) # mask 인자 필요시 추가
             middle_decoder_feature=output_decoder[0:3,...]
                
@@ -151,6 +163,13 @@ class CFGReconstruction(nn.Module):
         else: # Inference                                                                                
             #! --- Task 임베딩을 src에 더하기 ---            
             features_uncond = src
+            
+            # PGPT: Inject prompt if available during inference
+            if prompt is not None:
+                prompt_expanded = prompt.unsqueeze(1).expand(-1, features_uncond.size(1), -1)
+                features_uncond = features_uncond + prompt_expanded * 0.1
+                print(f"✓ PGPT: Prompt injected during inference")
+            
             rec_tokens, _ = self.transformer(features_uncond, pos_embed) # L, B, C
             rec_tokens = rec_tokens[3] 
                         

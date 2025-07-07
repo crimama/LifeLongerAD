@@ -220,6 +220,14 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
             Input = {'image':images,'clslabel':class_labels}
             data_time_m.update(time.time() - end)
             
+            # PGPT: Inject prompt if enabled
+            if cl_manager.use_pgpt and cl_manager.current_class_name:
+                prompts = cl_manager.get_prompts_for_class(cl_manager.current_class_name)
+                if prompts:
+                    # Use the first prompt for simplicity
+                    prompt = prompts[0]
+                    Input = cl_manager.inject_prompt_into_model(prompt, Input)
+            
             # Training with Enhanced Continual Learning
             cl_manager.save_old_tasks_weights() # 가중치 저장
             
@@ -302,6 +310,27 @@ def test(model, dataloader, device,
 
             with torch.no_grad():
                 Input = {'image':images,'clsname':class_labels}
+                
+                # PGPT: Select prompt using K-NN during inference
+                if cl_manager.use_pgpt:
+                    # Extract features for prompt selection
+                    if hasattr(model, 'backbone'):
+                        features = model.backbone(images)
+                    else:
+                        # Fallback: use the model to get features
+                        temp_output = model(Input)
+                        features = temp_output.get('feature_align', temp_output)
+                    
+                    # Average pooling if needed
+                    if features.dim() > 2:
+                        features = F.adaptive_avg_pool2d(features, (1, 1)).squeeze(-1).squeeze(-1)
+                    
+                    # Select best prompt using K-NN
+                    prompt, selected_class = cl_manager.select_prompt_by_knn(features)
+                    if prompt is not None:
+                        Input = cl_manager.inject_prompt_into_model(prompt, Input)
+                        print(f"✓ PGPT: Selected prompt for class '{selected_class}' during inference")
+                
                 outputs = model(Input)   
                 score_map = outputs['pred'].detach().cpu()            
                 score = score_map.reshape(score_map.shape[0],-1).max(-1)[0]
@@ -388,7 +417,11 @@ def fit(
             replace_percentage=0.2,
             use_neighbor_mask=cfg.CONTINUAL.get('use_neighbor_mask', True),
             neighbor_radius=cfg.CONTINUAL.get('neighbor_radius', 1),
-            previous_task_grad_decay=cfg.CONTINUAL.get('previous_task_grad_decay', 0.05)
+            previous_task_grad_decay=cfg.CONTINUAL.get('previous_task_grad_decay', 0.05),
+            use_pgpt=cfg.CONTINUAL.get('use_pgpt', False),
+            prompt_dim=cfg.CONTINUAL.get('prompt_dim', 256),
+            num_prompts_per_class=cfg.CONTINUAL.get('num_prompts_per_class', 1),
+            k_neighbors=cfg.CONTINUAL.get('k_neighbors', 1)
         )
         
         cl_manager.set_init_network_weight()
@@ -421,6 +454,12 @@ def fit(
             
             # Enhanced SCL with knowledge preservation
             cl_manager.reset_importance() # 새 작업 시작 시 중요도 리셋
+            
+            # PGPT: Initialize prompts for new class
+            if cl_manager.use_pgpt:
+                cl_manager.initialize_prompt_for_class(current_class_name)
+                cl_manager.set_current_class(current_class_name)
+                print(f"✓ PGPT: Initialized prompts for class '{current_class_name}'")
             
             best_score = 0.0
             if (n_task == 0) or (cfg.CONTINUAL.continual==False):
@@ -562,6 +601,14 @@ def fit(
                     _logger.info('Model init')
                 except Exception as e:
                     _logger.error(f"Model reinitialization failed: {e}")
+            
+            # PGPT: Calculate prototype for the current class after training
+            if cl_manager.use_pgpt:
+                try:
+                    cl_manager.calculate_prototype(trainloader, current_class_name)
+                    print(f"✓ PGPT: Prototype calculated for class '{current_class_name}'")
+                except Exception as e:
+                    _logger.error(f"PGPT prototype calculation failed for '{current_class_name}': {e}")
                     
     except Exception as e:
         _logger.error(f"Training failed with error: {e}")

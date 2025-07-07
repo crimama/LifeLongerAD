@@ -28,7 +28,8 @@ from collections.abc import Mapping # Import Mapping for type checking in to_dev
 class CL_Transformer():
 
     def __init__(self, model, device, sparsity_config, replace_percentage=0.2, 
-                 use_neighbor_mask=True, neighbor_radius=1, previous_task_grad_decay=0.05):
+                 use_neighbor_mask=True, neighbor_radius=1, previous_task_grad_decay=0.05,
+                 use_pgpt=False, prompt_dim=256, num_prompts_per_class=1, k_neighbors=1):
         """
         Initializes the Continual Learning manager.
 
@@ -43,6 +44,10 @@ class CL_Transformer():
             use_neighbor_mask (bool): Whether to use neighbor mask strategy in grow method. Defaults to True.
             neighbor_radius (int): Radius for neighbor mask strategy. Defaults to 1.
             previous_task_grad_decay (float): Decay factor for previous task gradient protection. Defaults to 0.05.
+            use_pgpt (bool): Whether to use PGPT (Prototype-Guided Prompt Tuning). Defaults to False.
+            prompt_dim (int): Dimension of prompt vectors. Defaults to 256.
+            num_prompts_per_class (int): Number of prompts per class. Defaults to 1.
+            k_neighbors (int): Number of neighbors for K-NN selection. Defaults to 1.
         """
         self.model = model
         self.device = device
@@ -58,6 +63,23 @@ class CL_Transformer():
         self.knowledge_distillation_enabled = False
         self.teacher_model = None  # Store teacher model (deepcopy of previous task model)
         self.has_previous_knowledge = False  # Track if we have stored knowledge from previous tasks
+
+        # PGPT (Prototype-Guided Prompt Tuning) functionality
+        self.use_pgpt = use_pgpt
+        self.prompt_dim = prompt_dim
+        self.num_prompts_per_class = num_prompts_per_class
+        self.k_neighbors = k_neighbors
+        
+        if self.use_pgpt:
+            # Prompt pool: class_name -> prompt vectors
+            self.prompt_pool = {}
+            # Prototype repository: class_name -> prototype features
+            self.prototype_repository = {}
+            # Current active class for training
+            self.current_class_name = None
+            # Feature extractor for prototype calculation
+            self.feature_extractor = None
+            print(f"✓ PGPT enabled: prompt_dim={prompt_dim}, prompts_per_class={num_prompts_per_class}, k_neighbors={k_neighbors}")
 
         # --- Model Analysis ---
         self.learnable_layers = self._identify_learnable_layers() # 학습 가능한 레이어 식별
@@ -175,6 +197,131 @@ class CL_Transformer():
                         neighbor_mask[nr, nc] = True
         
         return neighbor_mask
+
+    # --- PGPT (Prototype-Guided Prompt Tuning) Methods ---
+    
+    def initialize_prompt_for_class(self, class_name):
+        """Initialize prompts for a new class."""
+        if not self.use_pgpt:
+            return
+            
+        if class_name not in self.prompt_pool:
+            # Initialize random prompts for the new class
+            prompts = []
+            for i in range(self.num_prompts_per_class):
+                prompt = torch.randn(self.prompt_dim, device=self.device) * 0.02  # Small initialization
+                prompts.append(prompt)
+            
+            self.prompt_pool[class_name] = prompts
+            print(f"✓ Initialized {self.num_prompts_per_class} prompts for class '{class_name}'")
+    
+    def set_current_class(self, class_name):
+        """Set the current class for training and freeze other prompts."""
+        if not self.use_pgpt:
+            return
+            
+        self.current_class_name = class_name
+        
+        # Freeze all prompts except the current class
+        for name, param in self.model.named_parameters():
+            if 'prompt' in name.lower():
+                if class_name in name:
+                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
+        
+        print(f"✓ Set current class: '{class_name}', other prompts frozen")
+    
+    def get_prompts_for_class(self, class_name):
+        """Get prompts for a specific class."""
+        if not self.use_pgpt or class_name not in self.prompt_pool:
+            return None
+        return self.prompt_pool[class_name]
+    
+    def calculate_prototype(self, dataloader, class_name):
+        """Calculate prototype features for a class using the current backbone."""
+        if not self.use_pgpt:
+            return
+            
+        print(f"Calculating prototype for class '{class_name}'...")
+        
+        self.model.eval()
+        features = []
+        
+        with torch.no_grad():
+            for batch_idx, (images, labels, class_labels) in enumerate(dataloader):
+                # Move data to device
+                images = images.to(self.device)
+                
+                # Extract features from backbone (assuming the model has a backbone attribute)
+                # This depends on the specific model architecture
+                if hasattr(self.model, 'backbone'):
+                    backbone_features = self.model.backbone(images)
+                else:
+                    # Fallback: use the first part of the model for feature extraction
+                    # This needs to be adapted based on the actual model structure
+                    backbone_features = self.model(images)
+                    if isinstance(backbone_features, dict):
+                        backbone_features = backbone_features.get('feature_align', backbone_features)
+                
+                # Average pooling if needed
+                if backbone_features.dim() > 2:
+                    backbone_features = F.adaptive_avg_pool2d(backbone_features, (1, 1)).squeeze(-1).squeeze(-1)
+                
+                features.append(backbone_features.cpu())
+                
+                # Limit the number of batches for prototype calculation
+                if batch_idx >= 10:  # Use first 10 batches for prototype
+                    break
+        
+        if features:
+            # Calculate mean prototype
+            prototype = torch.cat(features, dim=0).mean(dim=0)
+            self.prototype_repository[class_name] = prototype.to(self.device)
+            print(f"✓ Prototype calculated for '{class_name}': {prototype.shape}")
+        else:
+            print(f"Warning: No features extracted for prototype calculation of '{class_name}'")
+    
+    def select_prompt_by_knn(self, input_features):
+        """Select the best prompt using K-NN on prototypes."""
+        if not self.use_pgpt or not self.prototype_repository:
+            return None
+            
+        # Calculate distances to all prototypes
+        distances = {}
+        input_features = input_features.to(self.device)
+        
+        for class_name, prototype in self.prototype_repository.items():
+            prototype = prototype.to(self.device)
+            distance = F.cosine_similarity(input_features.unsqueeze(0), prototype.unsqueeze(0), dim=1)
+            distances[class_name] = distance.item()
+        
+        # Find the closest class
+        best_class = min(distances, key=distances.get)
+        
+        # Get prompts for the best class
+        prompts = self.get_prompts_for_class(best_class)
+        if prompts:
+            # For simplicity, return the first prompt
+            # In a more sophisticated version, you could ensemble multiple prompts
+            return prompts[0], best_class
+        
+        return None, None
+    
+    def inject_prompt_into_model(self, prompt, model_input):
+        """Inject prompt into the model input for reconstruction."""
+        if not self.use_pgpt or prompt is None:
+            return model_input
+            
+        # This method needs to be adapted based on the specific model architecture
+        # For now, we'll assume the model can handle prompt injection
+        if isinstance(model_input, dict):
+            model_input['prompt'] = prompt
+        else:
+            # If model_input is a tensor, we need to modify the model to handle prompts
+            print("Warning: Prompt injection not implemented for tensor input")
+            
+        return model_input
 
     # --- Masking and Sparsity ---
     def create_masks(self):
