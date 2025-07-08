@@ -64,8 +64,8 @@ do
                         DEFAULT.exp_name=test_$cm-$exp \
                         CONTINUAL.continual=$c \
                         CONTINUAL.method.name=$cm \
-                        TRAIN.epochs=1 \
-                        TRAIN.wandb.use=false
+                        TRAIN.epochs=200 \
+                        TRAIN.wandb.use=True
             done 
         done
     done

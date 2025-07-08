@@ -19,7 +19,7 @@ from cosine_annealing_warmup import CosineAnnealingWarmupRestarts
 
 from utils.metrics import MetricCalculator
 from utils.log import AverageMeter,metric_logging,DriftMonitor
-from CL import CL_Transformer
+from CL import CL_PromptInput
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -61,21 +61,25 @@ def check_system_resources():
     except Exception as e:
         _logger.debug(f"Resource monitoring error: {e}")
 
-def safe_save_checkpoint(model, optimizer, epoch, class_name, savedir, best_score):
+def safe_save_checkpoint(model, optimizer, epoch, class_name, savedir, best_score, cl_manager=None):
     """Safely save model checkpoint with error handling."""
     try:
         os.makedirs(f"{savedir}/model_weight/", exist_ok=True)
         checkpoint_path = f"{savedir}/model_weight/{class_name}_model.pth"
         temp_path = checkpoint_path + ".tmp"
         
-        # Save to temporary file first
-        torch.save({
+        # Prepare checkpoint data
+        checkpoint_data = {
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'epoch': epoch,
             'best_score': best_score,
-            'class_name': class_name
-        }, temp_path)
+            'class_name': class_name,
+            'cl_manager_state': cl_manager.state_dict() if cl_manager is not None else None
+        }        
+        
+        # Save to temporary file first
+        torch.save(checkpoint_data, temp_path)
         
         # Atomic move
         os.rename(temp_path, checkpoint_path)
@@ -84,6 +88,35 @@ def safe_save_checkpoint(model, optimizer, epoch, class_name, savedir, best_scor
         
     except Exception as e:
         _logger.error(f"Failed to save checkpoint: {e}")
+        return False
+
+def safe_load_checkpoint(model, optimizer, checkpoint_path, cl_manager=None):
+    """Safely load model checkpoint with error handling."""
+    try:
+        if not os.path.exists(checkpoint_path):
+            _logger.warning(f"Checkpoint not found: {checkpoint_path}")
+            return False
+            
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        
+        # Load model state
+        model.load_state_dict(checkpoint['model_state_dict'])
+        
+        # Load optimizer state if available
+        if optimizer is not None and 'optimizer_state_dict' in checkpoint:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            
+        # Load CL manager state if available
+        if cl_manager is not None and 'cl_manager_state' in checkpoint and checkpoint['cl_manager_state'] is not None:
+            cl_manager.load_state_dict(checkpoint['cl_manager_state'])
+            
+        _logger.info(f"Checkpoint loaded successfully from: {checkpoint_path}")
+        _logger.info(f"Epoch: {checkpoint.get('epoch', 'unknown')}, Best score: {checkpoint.get('best_score', 'unknown')}")
+        
+        return True
+        
+    except Exception as e:
+        _logger.error(f"Failed to load checkpoint from {checkpoint_path}: {e}")
         return False
 
 def cleanup_gpu_memory():
@@ -111,18 +144,8 @@ def safe_wandb_log(metrics, retry_count=3):
             else:
                 _logger.error("Failed to log to wandb after all retries")
 
-def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_interval: int, epoch, epochs, savedir, cfg, drift_monitor, cl_manager) -> dict:
-    
-    def collect_gradients(cfg, model, all_gradients, epoch, step):
-        try:
-            if ((cfg.CONTINUAL.online and (step % 10 == 0)) or (not cfg.CONTINUAL.online and ((epoch) % 2 == 0) and (step % 4 == 0))):
-                step_grad_dict = {}
-                for name, param in model.named_parameters():
-                    if param.grad is not None:
-                        step_grad_dict[name] = param.grad.clone().detach().cpu().numpy()
-                all_gradients.append(step_grad_dict)
-        except Exception as e:
-            _logger.warning(f"Failed to collect gradients: {e}")
+def train(model, dataloader, optimizer, accelerator, log_interval: int, epoch, epochs, cfg, cl_manager) -> dict:
+        
     
     def log_training_info(step, accelerator, dataloader, epoch, epochs,
                       losses_m, feature_losses_m, svd_losses_m,
@@ -192,20 +215,6 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
             Input = {'image':images,'clslabel':class_labels}
             data_time_m.update(time.time() - end)
             
-            # PGPT: Inject prompt if enabled
-            if cl_manager.use_pgpt and cl_manager.current_class_name:
-                prompts = cl_manager.get_prompts_for_class(cl_manager.current_class_name)
-                if prompts:
-                    # Use the first prompt for simplicity
-                    prompt = prompts[0]
-                    Input = cl_manager.inject_prompt_into_model(prompt, Input)
-                    # Reduce debug prints during training - only print occasionally
-                    if step % 50 == 0:  # Only print every 50 steps
-                        print(f"✓ PGPT: Using prompt for class '{cl_manager.current_class_name}'")
-            
-            # Training with Enhanced Continual Learning
-            cl_manager.save_old_tasks_weights() # 가중치 저장
-            
             outputs = model(Input) 
             
             # Calculate loss
@@ -219,8 +228,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
             feature_losses_m.update(loss['feature_loss'])
             svd_losses_m.update(loss['svd_loss'])
             
-            optimizer.step()
-            cl_manager.recover_old_tasks_weights() # 이전 작업 가중치 복구
+            optimizer.step()            
             
             batch_time_m.update(time.time() - end)        
             # Enhanced Logging 
@@ -244,8 +252,8 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
     
     return {"loss": losses_m.avg, "gradients": all_gradients, "class_name": current_class_name}
 
-def test(model, dataloader, device, 
-         savedir, use_wandb, epoch, optimizer, epoch_time_m, class_name, current_class_name,
+def test(model, dataloader,  
+         savedir, use_wandb, epoch, optimizer, class_name, current_class_name,  
          cl_manager=None, last : bool = False) -> dict:
     try:
         from utils.metrics import MetricCalculator, loco_auroc    
@@ -264,32 +272,24 @@ def test(model, dataloader, device,
                 break
 
             with torch.no_grad():
-                Input = {'image':images,'clsname':class_labels}
-                
-                # PGPT: Select prompt using K-NN during inference
+                Input = {'image':images,'clslabel':class_labels}
+                output = model.backbone(Input)                
+                output = model.neck(output)
+                Input.update(output)
+                backbone_features = output.get('feature_align', None)
+                                
                 if cl_manager is not None and cl_manager.use_pgpt:
-                    # Extract features for prompt selection
-                    if hasattr(model, 'backbone'):
-                        features = model.backbone(images)
-                    else:
-                        # Fallback: use the model to get features
-                        temp_output = model(Input)
-                        features = temp_output.get('feature_align', temp_output)
-                    
-                    # Average pooling if needed
-                    if features.dim() > 2:
-                        features = F.adaptive_avg_pool2d(features, (1, 1)).squeeze(-1).squeeze(-1)
-                    
-                    # Select best prompt using K-NN
-                    prompt, selected_class = cl_manager.select_prompt_by_knn(features)
-                    if prompt is not None:
-                        Input = cl_manager.inject_prompt_into_model(prompt, Input)
-                        # Reduce debug prints during testing
-                        if idx % 10 == 0:  # Only print every 10th batch
-                            print(f"✓ PGPT: Selected prompt for class '{selected_class}' during inference")
+                    features = backbone_features.mean(0).reshape(backbone_features.shape[1],-1)                     
+
+                    if current_class_name != class_name:                    
+                        # Select best prompt using K-NN
+                        prompt, selected_class = cl_manager.select_prompt_by_knn(features)
+                        if prompt is not None:
+                            cl_manager.inject_prompt_into_model(prompt)
+                            
                 
-                outputs = model(Input)   
-                score_map = outputs['pred'].detach().cpu()            
+                output= model.reconstruction(Input)   
+                score_map = output['pred'].detach().cpu()            
                 score = score_map.reshape(score_map.shape[0],-1).max(-1)[0]
                     
             # Stack Scoring for metrics 
@@ -374,16 +374,12 @@ def fit(
         ## Enhanced Continual Learning Configuration
         
         # Initialize enhanced CL manager with new features
-        cl_manager = CL_Transformer(
+        cl_manager = CL_PromptInput(
             model=model, 
             device=accelerator.device, 
-            use_pgpt=cfg.CONTINUAL.get('use_pgpt', False),
-            prompt_dim=cfg.CONTINUAL.get('prompt_dim', 256),
-            num_prompts_per_class=cfg.CONTINUAL.get('num_prompts_per_class', 1),
-            k_neighbors=cfg.CONTINUAL.get('k_neighbors', 1)
+            use_pgpt=cfg.CONTINUAL.method.params.get('use_pgpt', False),
+            prompt_dim=cfg.CONTINUAL.method.params.get('prompt_dim', 256)            
         )
-        
-        cl_manager.set_init_network_weight()
         
         epoch_time_m = AverageMeter()
         end = time.time()
@@ -407,8 +403,6 @@ def fit(
                 _logger.info(f"PGPT: Initialized prompts for class '{current_class_name}'")
             
             best_score = 0.0
-            if (n_task == 0) or (cfg.CONTINUAL.continual==False):
-                drift_monitor = DriftMonitor(log_dir=os.path.join(savedir,'DriftMonitor.log'))
             
             cleanup_gpu_memory()
             _logger.info(f"Current Class Name : {current_class_name}")        
@@ -429,19 +423,15 @@ def fit(
                     
                 try:
                     # train one epoch with enhanced features
-                    train_result = train(
+                    train(
                             model        = model, 
-                            dataloader   = trainloader, 
-                            testloader   = testloader, 
-                            optimizer    = optimizer, 
-                            scheduler    = scheduler,
+                            dataloader   = trainloader,                             
+                            optimizer    = optimizer,                             
                             accelerator  = accelerator, 
                             log_interval = log_interval,
                             epoch        = epoch,
-                            epochs       = epochs,
-                            savedir      = savedir, 
-                            cfg          = cfg,
-                            drift_monitor= drift_monitor,
+                            epochs       = epochs,                            
+                            cfg          = cfg,                            
                             cl_manager   = cl_manager
                         )
                      
@@ -451,16 +441,14 @@ def fit(
                         epoch_time_m.update(time.time() - end)
                         end = time.time()
                         
-                    if (epoch%2 == 0) or (epoch%199 == 0): 
+                    if (epoch%5 == 0) or (epoch%199 == 0): 
                         test_metrics = test(
                             model              = model, 
                             dataloader         = testloader, 
-                            device             = accelerator.device, 
                             savedir            = savedir, 
                             use_wandb          = use_wandb,
                             epoch              = epoch, 
                             optimizer          = optimizer,
-                            epoch_time_m       = epoch_time_m, 
                             class_name         = current_class_name,
                             current_class_name = current_class_name,
                             cl_manager         = cl_manager
@@ -472,7 +460,10 @@ def fit(
                     # model save
                     score = (test_metrics['img_level']['auroc'] + test_metrics['pix_level']['auroc']) / 2
                     if best_score < score:
-                        safe_save_checkpoint(model, optimizer, epoch, current_class_name, savedir, score)
+                        if cl_manager.use_pgpt:
+                            cl_manager.calculate_prototype(trainloader, current_class_name)
+                            _logger.info(f"Prototype calculated for class '{current_class_name}'")
+                        safe_save_checkpoint(model, optimizer, epoch, current_class_name, savedir, score, cl_manager)
                         best_score = score 
                         
                 except Exception as e:
@@ -481,16 +472,14 @@ def fit(
                     continue
         
             if cfg.CONTINUAL.continual:
-                try:                                       
-                    
+                try:                                                           
                     # Enhanced Continual evaluation with detailed logging
                     num_start = 0 
                     num_end = num_current_class+1 if num_current_class == len(loader_dict)-1 else num_current_class+2
                 
                     for n_task in range(num_start,num_end):
                         if _shutdown_requested:
-                            break
-                            
+                            break                            
                         print('\n')
                         print(f"loader_dict : {len(list(loader_dict.items()))}")
                         print(f"n_task : {n_task}")
@@ -499,17 +488,26 @@ def fit(
                         trainloader, testloader = loader_dict[class_name]['train'],loader_dict[class_name]['test']
                         trainloader, testloader = accelerator.prepare(trainloader, testloader)            
                         
+                        # Load best checkpoint for this class (including cl_manager state)
+                        checkpoint_path = f"{savedir}/model_weight/{current_class_name}_model.pth"
+                        if os.path.exists(checkpoint_path):
+                            try:
+                                safe_load_checkpoint(model, optimizer, checkpoint_path, cl_manager)
+                                _logger.info(f"Loaded best checkpoint for class '{current_class_name}' evaluation")
+                            except Exception as e:
+                                _logger.error(f"Failed to load checkpoint for class '{current_class_name}': {e}")                        
+
+                        _logger.info(f"Evaluation for weight class : {current_class_name} | evaluation class : {class_name}")
                         test_metrics = test(
                                         model              = model, 
-                                        device             = accelerator.device,
+                                        dataloader         = testloader,
                                         savedir            = savedir, 
                                         use_wandb          = use_wandb,
                                         epoch              = 0 if epochs == 0 else epoch,
                                         optimizer          = optimizer, 
-                                        epoch_time_m       = epoch_time_m,
-                                        class_name         = trainloader.dataset.class_name,
+                                        class_name         = class_name,
                                         current_class_name = current_class_name,
-                                        dataloader         = testloader,
+                                        cl_manager         = cl_manager,
                                         last               = True
                                     )
                     if n_task < len(loader_dict) - 1:
@@ -530,21 +528,8 @@ def fit(
                     _logger.error(f"Model reinitialization failed: {e}")
             
             # PGPT: Calculate prototype for the current class after training
-            if cl_manager.use_pgpt:
-                try:
-                    cl_manager.calculate_prototype(trainloader, current_class_name)
-                    _logger.info(f"PGPT: Prototype calculated for class '{current_class_name}'")
-                    
-                    # Add PGPT summary at the end of each task
-                    _logger.info("=" * 40)
-                    _logger.info("PGPT SUMMARY")
-                    _logger.info(f"Total classes with prompts: {len(cl_manager.prompt_pool)}")
-                    _logger.info(f"Total prototypes calculated: {len(cl_manager.prototype_repository)}")
-                    _logger.info(f"Current task: {n_task + 1}/{len(loader_dict)}")
-                    _logger.info("=" * 40)
-                    
-                except Exception as e:
-                    _logger.error(f"PGPT prototype calculation failed for '{current_class_name}': {e}")
+            
+
                     
     except Exception as e:
         _logger.error(f"Training failed with error: {e}")

@@ -24,15 +24,12 @@ SCHEDULER:
     gamma: 0.995
 
 CONTINUAL:
-  continual: True
+  continual: True  
   method: 
-    name: DST # CL 비활성화하려면 'DST'를 'None'으로 변경하세요
+    name: PromptInput 
     params:
-      default_sparsity: 0.8
-      layer_specific:
-        reconstruction.rec_head: 0.7
-      specific_nodes_ratio: 0.1
-      selected_nodes_ratio: 0.5
+      use_pgpt: True    
+      prompt_dim: 256  
 
 
 MODEL:
