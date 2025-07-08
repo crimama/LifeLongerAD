@@ -547,19 +547,12 @@ class CL_Transformer():
     def _calculate_kl_loss(self, student_output, teacher_output, temperature):
         """Calculate KL divergence loss between student and teacher outputs."""
         # Flatten outputs if they have more than 2 dimensions
-        if student_output.dim() > 2:
-            student_flat = student_output.flatten(1)
-            teacher_flat = teacher_output.flatten(1)
-        else:
-            student_flat = student_output
-            teacher_flat = teacher_output
+        # Normalize outputs
+        student_norm = F.normalize(student_output, p=2, dim=-1)
+        teacher_norm = F.normalize(teacher_output, p=2, dim=-1)
         
-        # Apply softmax with temperature
-        student_soft = F.log_softmax(student_flat / temperature, dim=1)
-        teacher_soft = F.softmax(teacher_flat / temperature, dim=1)
-        
-        # Calculate KL divergence
-        kl_loss = F.kl_div(student_soft, teacher_soft, reduction='batchmean')
+        # Calculate L2 distance
+        kl_loss = F.mse_loss(student_norm, teacher_norm, reduction='mean')
         
         # Scale by temperature squared
         return kl_loss * (temperature ** 2)
