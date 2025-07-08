@@ -45,8 +45,13 @@ def compute_continual_result(result: pd.DataFrame,
             # 현재 클래스에 해당하는 데이터 추출 (불필요한 열 제거)
             temp = result[result['class_name'] == cln].drop(columns=['task', 'epoch', 'epoch_time'])
             
-            # 마지막 결과 행 추출 (last == 1)            
-            last_value = temp[temp['last'] == 1].iloc[-1]
+            # 마지막 결과 행 추출 (last == 1)
+            last_rows = temp[temp['last'] == 1]
+            if last_rows.empty:
+                print(f"Warning: No rows with last == 1 found for class '{cln}'. Skipping.")
+                continue
+            
+            last_value = last_rows.iloc[-1]
             
             # Average Forgetting (AF) == Forgetting Measure: 
             # last==0 인 경우의 수치형 값 최대치와 last_value의 차이를 계산
@@ -55,24 +60,37 @@ def compute_continual_result(result: pd.DataFrame,
             
             # Backward Transfer (BWT):
             # 현재 클래스에 해당하는 GT_class_name을 가진 행에서 계산.
-            bwt_value = temp[(temp['last'] == 1) & (temp['GT_class_name'] == cln)] \
-                            .drop(columns=['class_name', 'GT_class_name'])
+            bwt_rows = temp[(temp['last'] == 1) & (temp['GT_class_name'] == cln)]
+            if bwt_rows.empty:
+                print(f"Warning: No BWT data found for class '{cln}'. Using last_value as fallback.")
+                bwt_value = last_value.drop(['class_name', 'GT_class_name'])
+            else:
+                bwt_value = bwt_rows.drop(columns=['class_name', 'GT_class_name'])
+            
             # last_value와 bwt_value의 차이에서 마지막 행 값 사용            
             BWT = (last_value - bwt_value)
             
             # Forward Transfer (FWT):
             # last==1인 경우 첫 행에서 계산.
-            fwt_value = temp[temp['last'] == 1] \
-                            .drop(columns=['class_name', 'GT_class_name']).iloc[0]
-            FWT = (bwt_value - fwt_value)
+            fwt_rows = temp[temp['last'] == 1].drop(columns=['class_name', 'GT_class_name'])
+            if fwt_rows.empty:
+                print(f"Warning: No FWT data found for class '{cln}'. Setting FWT to zero.")
+                FWT = pd.Series({m: 0.0 for m in metric_list})
+            else:
+                fwt_value = fwt_rows.iloc[0]
+                FWT = (bwt_value - fwt_value)
             
             # 각 메트릭에 대해 AF, BWT, FWT 값을 DataFrame에 정리
             # eval 대신 직접 인덱싱하여 값을 추출합니다.
-            data = {
-                'AF': [AF[m] for m in metric_list],
-                'BWT': [BWT[m].to_list()[0] for m in metric_list],
-                'FWT': [FWT[m].to_list()[0] for m in metric_list]
-            }
+            try:
+                data = {
+                    'AF': [AF[m] for m in metric_list],
+                    'BWT': [BWT[m].iloc[0] if hasattr(BWT[m], 'iloc') else BWT[m] for m in metric_list],
+                    'FWT': [FWT[m].iloc[0] if hasattr(FWT[m], 'iloc') else FWT[m] for m in metric_list]
+                }
+            except (KeyError, IndexError) as e:
+                print(f"Warning: Error calculating metrics for class '{cln}': {e}. Skipping.")
+                continue
             df_metrics = pd.DataFrame(data, index=metric_list).reset_index().rename(columns={'index': 'metric'})
             df_metrics['class_name'] = cln
             
@@ -84,8 +102,22 @@ def compute_continual_result(result: pd.DataFrame,
             
                 
     else:        
-        main_result = pd.DataFrame([result[result['GT_class_name'] == cln].iloc[-1] for cln in class_name_list]).drop(columns=['task','epoch','class_name','last','epoch_time']).reset_index(drop=True)
-        forgetting_result =  pd.DataFrame()
+        # Handle non-continual case with error checking
+        main_result_rows = []
+        for cln in class_name_list:
+            class_data = result[result['GT_class_name'] == cln]
+            if not class_data.empty:
+                main_result_rows.append(class_data.iloc[-1])
+            else:
+                print(f"Warning: No data found for class '{cln}' in non-continual evaluation.")
+        
+        if main_result_rows:
+            main_result = pd.DataFrame(main_result_rows).drop(columns=['task','epoch','class_name','last','epoch_time']).reset_index(drop=True)
+        else:
+            # Create empty DataFrame with expected columns if no data found
+            main_result = pd.DataFrame()
+        
+        forgetting_result = pd.DataFrame()
     return main_result, forgetting_result
     
 

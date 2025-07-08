@@ -17,7 +17,7 @@ from datasets.mvtecad import class_label_mapping
 from collections import OrderedDict
 from cosine_annealing_warmup import CosineAnnealingWarmupRestarts
 
-from utils.metrics import MetricCalculator
+from utils.metrics import MetricCalculator, loco_auroc    
 from utils.log import AverageMeter,metric_logging,DriftMonitor
 from CL import CL_PromptInput
 import warnings
@@ -99,8 +99,8 @@ def safe_load_checkpoint(model, optimizer, checkpoint_path, cl_manager=None):
             
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
         
-        # Load model state
-        model.load_state_dict(checkpoint['model_state_dict'])
+        # Load model state with PGPT-aware loading
+        model.load_state_dict(checkpoint['model_state_dict'], strict=False)
         
         # Load optimizer state if available
         if optimizer is not None and 'optimizer_state_dict' in checkpoint:
@@ -215,6 +215,14 @@ def train(model, dataloader, optimizer, accelerator, log_interval: int, epoch, e
             Input = {'image':images,'clslabel':class_labels}
             data_time_m.update(time.time() - end)
             
+            # PGPT: Inject class-specific prompts for this batch
+            if cl_manager.use_pgpt:
+                cl_manager.inject_prompts_for_batch(class_labels)
+                if step % 50 == 0:  # Only print occasionally
+                    unique_classes = torch.unique(class_labels)
+                    class_names = [cl_manager.get_class_from_label(label.item()) for label in unique_classes]
+                    print(f"✓ PGPT: Using prompts for classes in batch: {class_names}")
+            
             outputs = model(Input) 
             
             # Calculate loss
@@ -253,10 +261,9 @@ def train(model, dataloader, optimizer, accelerator, log_interval: int, epoch, e
     return {"loss": losses_m.avg, "gradients": all_gradients, "class_name": current_class_name}
 
 def test(model, dataloader,  
-         savedir, use_wandb, epoch, optimizer, class_name, current_class_name,  
-         cl_manager=None, last : bool = False) -> dict:
+        savedir, use_wandb, epoch, optimizer, class_name, current_class_name,  
+        cl_manager=None, last : bool = False) -> dict:
     try:
-        from utils.metrics import MetricCalculator, loco_auroc    
         model.eval()
         img_level = MetricCalculator(metric_list = ['auroc','average_precision'])
         pix_level = MetricCalculator(metric_list = ['auroc','average_precision'])     
@@ -279,13 +286,25 @@ def test(model, dataloader,
                 backbone_features = output.get('feature_align', None)
                                 
                 if cl_manager is not None and cl_manager.use_pgpt:
-                    features = backbone_features.mean(0).reshape(backbone_features.shape[1],-1)                     
-
-                    if current_class_name != class_name:                    
-                        # Select best prompt using K-NN
-                        prompt, selected_class = cl_manager.select_prompt_by_knn(features)
-                        if prompt is not None:
-                            cl_manager.inject_prompt_into_model(prompt)
+                    # PGPT: Class-aware prompt injection for evaluation
+                    # Enhanced to use backbone features for K-NN fallback
+                    if class_name != current_class_name:
+                        cl_manager.inject_prompts_for_batch(class_labels, backbone_features)
+                    else:
+                        cl_manager.inject_prompts_for_batch(class_labels)
+                    
+                    # Log evaluation details for debugging
+                    unique_eval_classes = torch.unique(class_labels)
+                    eval_class_names = [cl_manager.get_class_from_label(label.item()) for label in unique_eval_classes]
+                    
+                    # Check if we're evaluating on classes different from the current training class
+                    cross_class_evaluation = any(eval_class != current_class_name for eval_class in eval_class_names if eval_class is not None)
+                    
+                    if cross_class_evaluation:
+                        _logger.debug(f"Cross-class evaluation: evaluating {eval_class_names} with model trained on {current_class_name}")
+                        # Enhanced fallback is now handled within inject_prompts_for_batch with K-NN
+                    else:
+                        _logger.debug(f"Same-class evaluation: using class-specific prompts for {eval_class_names}")
                             
                 
                 output= model.reconstruction(Input)   
@@ -396,21 +415,48 @@ def fit(
                 _logger.info("Shutdown requested. Exiting task loop...")
                 break
             
-            # PGPT: Initialize prompts for new class
-            if cl_manager.use_pgpt:
-                cl_manager.initialize_prompt_for_class(current_class_name)
-                cl_manager.set_current_class(current_class_name)
-                _logger.info(f"PGPT: Initialized prompts for class '{current_class_name}'")
+            # Store original key for loader_dict access
+            original_task_key = current_class_name
+            
+            # Handle multi-class tasks - current_class_name might be a list
+            if isinstance(current_class_name, (list, tuple)) or isinstance(current_class_name, omegaconf.listconfig.ListConfig):
+                # Multi-class task
+                task_classes = current_class_name
+                primary_class = task_classes[0] if len(task_classes) > 0 else None
+                
+                # PGPT: Initialize prompts for all classes in this task
+                if cl_manager.use_pgpt:
+                    for class_name in task_classes:
+                        cl_manager.initialize_prompt_for_class(class_name)
+                        cl_manager.add_class_to_task(class_name)
+                    
+                    if primary_class:
+                        cl_manager.set_current_class(primary_class)
+                    
+                    _logger.info(f"PGPT: Initialized prompts for multi-class task: {task_classes}")
+                    _logger.info(f"PGPT: Primary class set to: {primary_class}")
+                    
+                current_class_name = primary_class  # Use primary class for logging/saving
+            else:
+                # Single-class task (original behavior)
+                task_classes = [current_class_name]
+                
+                # PGPT: Initialize prompts for new class
+                if cl_manager.use_pgpt:
+                    cl_manager.initialize_prompt_for_class(current_class_name)
+                    cl_manager.set_current_class(current_class_name)
+                    _logger.info(f"PGPT: Initialized prompts for single-class task: {current_class_name}")
             
             best_score = 0.0
             
             cleanup_gpu_memory()
-            _logger.info(f"Current Class Name : {current_class_name}")        
+            _logger.info(f"Current Task Classes: {task_classes}")
+            _logger.info(f"Primary Class: {current_class_name}")        
             _logger.info(f"Enhanced CL Features: PGPT={cl_manager.use_pgpt}")
                 
             # Init optimzier & SCheduler         
-            # Init Dataloader 
-            trainloader, testloader = loader_dict[current_class_name]['train'],loader_dict[current_class_name]['test']
+            # Init Dataloader - Use original_task_key for loader_dict access
+            trainloader, testloader = loader_dict[original_task_key]['train'], loader_dict[original_task_key]['test']
             
             model, trainloader, testloader, optimizer, scheduler = accelerator.prepare(model, trainloader, testloader, optimizer, scheduler)
             
@@ -422,6 +468,9 @@ def fit(
                     break
                     
                 try:
+                    # Initialize test_metrics with default values
+                    test_metrics = {'img_level': {'auroc': 0.0}, 'pix_level': {'auroc': 0.0}}
+                    
                     # train one epoch with enhanced features
                     train(
                             model        = model, 
@@ -456,13 +505,32 @@ def fit(
                                 
                 
                     # EVALUATION
-                    num_current_class = list(loader_dict.keys()).index(current_class_name)            
+                    # Fix: Use original_task_key for finding index instead of current_class_name
+                    try:
+                        num_current_class = list(loader_dict.keys()).index(original_task_key)
+                    except ValueError:
+                        # Fallback: find index by checking if current_class_name matches any key
+                        num_current_class = None
+                        for idx, key in enumerate(loader_dict.keys()):
+                            if (isinstance(key, (list, tuple)) or isinstance(key, omegaconf.listconfig.ListConfig)):
+                                if current_class_name in key:
+                                    num_current_class = idx
+                                    break
+                            elif key == current_class_name:
+                                num_current_class = idx
+                                break
+                        
+                        if num_current_class is None:
+                            _logger.error(f"Could not find index for class '{current_class_name}' in loader_dict keys: {list(loader_dict.keys())}")
+                            num_current_class = 0  # Default fallback
                     # model save
                     score = (test_metrics['img_level']['auroc'] + test_metrics['pix_level']['auroc']) / 2
                     if best_score < score:
                         if cl_manager.use_pgpt:
-                            cl_manager.calculate_prototype(trainloader, current_class_name)
-                            _logger.info(f"Prototype calculated for class '{current_class_name}'")
+                            # Calculate prototypes for all classes in current task
+                            for class_name in task_classes:
+                                cl_manager.calculate_prototype(trainloader, class_name)
+                                _logger.info(f"Prototype calculated for class '{class_name}'")
                         safe_save_checkpoint(model, optimizer, epoch, current_class_name, savedir, score, cl_manager)
                         best_score = score 
                         
@@ -474,6 +542,14 @@ def fit(
             if cfg.CONTINUAL.continual:
                 try:                                                           
                     # Enhanced Continual evaluation with detailed logging
+                    # Ensure num_current_class is defined before use
+                    if 'num_current_class' not in locals():
+                        try:
+                            num_current_class = list(loader_dict.keys()).index(original_task_key)
+                        except ValueError:
+                            num_current_class = 0
+                            _logger.warning(f"Could not find index for '{original_task_key}', defaulting to 0")
+                    
                     num_start = 0 
                     num_end = num_current_class+1 if num_current_class == len(loader_dict)-1 else num_current_class+2
                 
@@ -484,8 +560,22 @@ def fit(
                         print(f"loader_dict : {len(list(loader_dict.items()))}")
                         print(f"n_task : {n_task}")
                         print('\n')
-                        class_name, class_loader_dict = list(loader_dict.items())[n_task]
-                        trainloader, testloader = loader_dict[class_name]['train'],loader_dict[class_name]['test']
+                        
+                        # Get the original task key and class info
+                        eval_task_key, class_loader_dict = list(loader_dict.items())[n_task]
+                        
+                        # Determine evaluation class name
+                        if isinstance(eval_task_key, (list, tuple)) or isinstance(eval_task_key, omegaconf.listconfig.ListConfig):
+                            # Multi-class task - use primary class for evaluation
+                            eval_class_name = eval_task_key[0] if len(eval_task_key) > 0 else None
+                            eval_task_classes = eval_task_key
+                        else:
+                            # Single-class task
+                            eval_class_name = eval_task_key
+                            eval_task_classes = [eval_task_key]
+                        
+                        # Use original key for loader_dict access
+                        trainloader, testloader = loader_dict[eval_task_key]['train'], loader_dict[eval_task_key]['test']
                         trainloader, testloader = accelerator.prepare(trainloader, testloader)            
                         
                         # Load best checkpoint for this class (including cl_manager state)
@@ -497,7 +587,7 @@ def fit(
                             except Exception as e:
                                 _logger.error(f"Failed to load checkpoint for class '{current_class_name}': {e}")                        
 
-                        _logger.info(f"Evaluation for weight class : {current_class_name} | evaluation class : {class_name}")
+                        _logger.info(f"Evaluation for weight class : {current_class_name} | evaluation class : {eval_class_name}")
                         test_metrics = test(
                                         model              = model, 
                                         dataloader         = testloader,
@@ -505,7 +595,7 @@ def fit(
                                         use_wandb          = use_wandb,
                                         epoch              = 0 if epochs == 0 else epoch,
                                         optimizer          = optimizer, 
-                                        class_name         = class_name,
+                                        class_name         = eval_class_name,
                                         current_class_name = current_class_name,
                                         cl_manager         = cl_manager,
                                         last               = True
