@@ -397,7 +397,7 @@ def fit(
         cl_manager.set_init_network_weight()
         
         # Enable knowledge distillation if configured
-        if cfg.CONTINUAL.get('use_knowledge_distillation', True):
+        if cfg.CONTINUAL.get('use_knowledge_distillation', False):            
             cl_manager.enable_knowledge_distillation()
             print(f"✓ CL Manager KD enabled: {cl_manager.knowledge_distillation_enabled}")
             
