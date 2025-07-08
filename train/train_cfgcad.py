@@ -168,30 +168,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
                 }
                 safe_wandb_log(metrics)
         except Exception as e:
-            _logger.error(f"Logging failed: {e}")
-
-    
-    def do_online_inference(cfg, step, dataloader, model, accelerator, savedir, epoch, testloader, current_class_name, batch_time_m, optimizer, cl_manager):
-        try:
-            if ((cfg.CONTINUAL.online and (step % 10 == 0)) or (step == len(dataloader) - 1)):
-                test_metrics = test(
-                    model=model, device=accelerator.device, savedir=savedir, use_wandb=False,
-                    epoch=step if cfg.CONTINUAL.online else step*epoch, optimizer=optimizer,
-                    epoch_time_m=batch_time_m, class_name=current_class_name,
-                    current_class_name=current_class_name, dataloader=testloader, cl_manager=cl_manager
-                )
-        except Exception as e:
-            _logger.warning(f"Online inference failed: {e}")
-    
-    def save_gradients_if_needed(cfg, dataloader, epoch, savedir, all_gradients):
-        try:
-            if (cfg.CONTINUAL.online or (not cfg.CONTINUAL.online and ((epoch) % 2 == 0))):
-                current_class_name_ = dataloader.dataset.class_name
-                gradient_dir = f"{savedir}/gradients"
-                os.makedirs(gradient_dir, exist_ok=True)
-                np.save(f"{gradient_dir}/{current_class_name_}_gradient_log_epoch_{epoch}.npy", all_gradients)
-        except Exception as e:
-            _logger.warning(f"Failed to save gradients: {e}")
+            _logger.error(f"Logging failed: {e}")       
     
     batch_time_m = AverageMeter()
     data_time_m = AverageMeter()
@@ -256,8 +233,7 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
                 # Check resources periodically
                 if (step + 1) % (adjusted_log_interval * 5) == 0:
                     check_system_resources()
-                
-            do_online_inference(cfg, step, dataloader, model, accelerator, savedir, epoch, testloader, current_class_name, batch_time_m, optimizer, cl_manager)
+                            
             end = time.time()
             
         except Exception as e:
@@ -424,9 +400,6 @@ def fit(
                 _logger.info("Shutdown requested. Exiting task loop...")
                 break
             
-            # Enhanced SCL with knowledge preservation
-            cl_manager.reset_importance() # 새 작업 시작 시 중요도 리셋
-            
             # PGPT: Initialize prompts for new class
             if cl_manager.use_pgpt:
                 cl_manager.initialize_prompt_for_class(current_class_name)
@@ -508,7 +481,7 @@ def fit(
                     continue
         
             if cfg.CONTINUAL.continual:
-                try:
+                try:                                       
                     
                     # Enhanced Continual evaluation with detailed logging
                     num_start = 0 
@@ -531,12 +504,12 @@ def fit(
                                         device             = accelerator.device,
                                         savedir            = savedir, 
                                         use_wandb          = use_wandb,
-                                        epoch              = epochs - 1 if epochs > 0 else 0,  # Use final epoch number
+                                        epoch              = 0 if epochs == 0 else epoch,
                                         optimizer          = optimizer, 
                                         epoch_time_m       = epoch_time_m,
                                         class_name         = trainloader.dataset.class_name,
                                         current_class_name = current_class_name,
-                                        cl_manager         = cl_manager,
+                                        dataloader         = testloader,
                                         last               = True
                                     )
                     if n_task < len(loader_dict) - 1:
@@ -585,3 +558,6 @@ def fit(
             except:
                 pass
         _logger.info("Training completed or terminated")
+
+
+        

@@ -61,10 +61,10 @@ do
                     CUDA_VISIBLE_DEVICES=$gpu_id python main.py \
                         default_setting=./configs/default/$d.yaml \
                         model_setting=./configs/model/$m.yaml \
-                        DEFAULT.exp_name=prompt_$cm-$exp \
+                        DEFAULT.exp_name=test_$cm-$exp \
                         CONTINUAL.continual=$c \
                         CONTINUAL.method.name=$cm \
-                        TRAIN.epochs=200 \
+                        TRAIN.epochs=1 \
                         TRAIN.wandb.use=false
             done 
         done
