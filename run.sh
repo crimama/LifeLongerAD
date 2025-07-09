@@ -3,6 +3,19 @@
 # VISA  'candle capsules cashew chewinggum fryum macaroni1 macaroni2 pcb1 pcb2 pcb3 pcb4 pipe_fryum'
 # MVTecLoco 'breakfast_box  juice_bottle  pushpins  screw_bag  splicing_connectors'
 # MPDD 'tubes metal_plate connector bracket_white bracket_brown bracket_black'
+
+# Usage examples for checkpoint resume:
+# 1. Resume from latest checkpoint:
+#    DEFAULT.resume_from_checkpoint=model_weight/latest_checkpoint.pth
+# 2. Resume from specific task checkpoint:
+#    DEFAULT.resume_from_checkpoint=model_weight/cable_model.pth
+# 3. Start from specific task index (0-based):
+#    DEFAULT.start_task_idx=3
+# 4. Start from specific task name:
+#    DEFAULT.resume_task_name=cable
+# 5. Resume from checkpoint and start from specific task:
+#    DEFAULT.resume_from_checkpoint=model_weight/latest_checkpoint.pth DEFAULT.start_task_idx=2
+
 exp_id=$1
 
 # GPU ID에 따라 method_setting 설정
@@ -65,7 +78,7 @@ do
                         CONTINUAL.continual=$c \
                         CONTINUAL.method.name=$cm \
                         TRAIN.epochs=200 \
-                        TRAIN.wandb.use=True
+                        TRAIN.wandb.use=false
             done 
         done
     done
