@@ -93,7 +93,15 @@ class MVTecAD(Dataset):
         img = img.type(torch.float32)
         label = self.labels[idx]
         
-        class_label = class_label_mapping[class_name]
+        # Debug information for class_label_mapping
+        try:
+            class_label = class_label_mapping[class_name]
+        except KeyError as e:
+            print(f"KeyError in MVTecAD.__getitem__: class_name='{class_name}' not found in class_label_mapping")
+            print(f"Available keys: {list(class_label_mapping.keys())}")
+            print(f"Dataset self.class_name: {self.class_name} (type: {type(self.class_name)})")
+            print(f"Image path: {img_dir}")
+            raise KeyError(f"Class name '{class_name}' not found in class_label_mapping. Available keys: {list(class_label_mapping.keys())}")
         
         if self.train_mode == 'test': # Test
             gt = self._get_ground_truth(img_dir,img)

@@ -2,6 +2,10 @@ DEFAULT:
   seed: 42
   savedir: ./results
   exp_name: '.'
+  # Checkpoint resume options
+  resume_from_checkpoint: null  # Path to checkpoint file (e.g., "./results/model_weight/checkpoint.pth")
+  start_task_idx: null          # Task index to start from (0-based, null means start from beginning)
+  resume_task_name: null        # Task name to start from (optional, takes precedence over start_task_idx)
 
 DATASET:
   datadir: ../Data
@@ -16,21 +20,22 @@ DATASET:
     anomaly_ratio: 0.0
     baseline: True
   class_names:
-    - grid
-    - carpet
-    - cable     
-    - zipper
-    - wood
-    - tile
-    - metal_nut
-    - transistor
-    - bottle
-    - leather
-    - pill
-    - hazelnut
-    - toothbrush
-    - capsule
-    - screw
+    -
+      - grid
+      - carpet
+      - cable     
+      - zipper
+      - wood
+      - tile
+      - metal_nut
+      - transistor
+      - bottle
+      - leather
+      - pill
+      - hazelnut
+      - toothbrush
+      - capsule
+      - screw
 
 
 OPTIMIZER:

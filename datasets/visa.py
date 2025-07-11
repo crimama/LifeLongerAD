@@ -90,7 +90,15 @@ class VISA(Dataset):
         img = img.type(torch.float32)
         label = self.labels[idx]
         
-        class_label = class_label_mapping[self.class_name]
+        # Debug information for class_label_mapping
+        try:
+            class_label = class_label_mapping[self.class_name]
+        except KeyError as e:
+            print(f"KeyError in VISA.__getitem__: self.class_name='{self.class_name}' not found in class_label_mapping")
+            print(f"self.class_name type: {type(self.class_name)}")
+            print(f"Available keys: {list(class_label_mapping.keys())}")
+            print(f"Image path: {img_dir}")
+            raise KeyError(f"Class name '{self.class_name}' not found in class_label_mapping. Available keys: {list(class_label_mapping.keys())}")
         
         if self.train_mode == 'test': # Test   
             gt = self._get_ground_truth(img_dir, img, idx)

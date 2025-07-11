@@ -33,8 +33,14 @@ elif [ "$exp_id" -eq 1051 ]; then
 elif [ "$exp_id" -eq 15 ]; then
     method_setting="cfgcad"
     continual='true'
-    exp='1_1_with_15_step'
+    exp='1_1_with_15_step'w
     dataset='mvtecad_15'
+    gpu_id=0
+elif [ "$exp_id" -eq 115 ]; then
+    method_setting="cfgcad"
+    continual='true'
+    exp='15_1_with_1_step'
+    dataset='mvtecad'
     gpu_id=0
 else
     echo "Invalid EXP number"
@@ -47,7 +53,7 @@ fi
 for c in $continual
 do
     if [ "$c" = "true" ]; then
-        continual_method='DST'
+        continual_method='no'
     else
         continual_method="no"
     fi
@@ -61,11 +67,11 @@ do
                     CUDA_VISIBLE_DEVICES=$gpu_id python main.py \
                         default_setting=./configs/default/$d.yaml \
                         model_setting=./configs/model/$m.yaml \
-                        DEFAULT.exp_name=sparse30_$cm-$exp \
+                        DEFAULT.exp_name=sparse32_no_$cm-$exp \
                         CONTINUAL.continual=$c \
                         CONTINUAL.method.name=$cm \
                         TRAIN.epochs=200 \
-                        TRAIN.wandb.use=true
+                        TRAIN.wandb.use=false
             done 
         done
     done
