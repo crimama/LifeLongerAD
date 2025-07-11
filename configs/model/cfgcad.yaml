@@ -33,6 +33,7 @@ CONTINUAL:
         reconstruction.rec_head: 0.7
       specific_nodes_ratio: 0.1
       selected_nodes_ratio: 0.5
+  use_knowledge_distillation: False
 
       
 
