@@ -16,21 +16,22 @@ DATASET:
     anomaly_ratio: 0.0
     baseline: True
   class_names:
+    class_names:
     - capsule
-    - toothbrush
-    - screw
-    - grid
-    - carpet
-    - cable
-    - zipper
-    - wood
-    - tile
-    - metal_nut
-    - transistor
-    - bottle
-    - leather
-    - pill
+    - bottle      
+    - cable      
     - hazelnut
+    - carpet
+    - grid
+    - pill
+    - metal_nut
+    - leather
+    - toothbrush
+    - tile
+    - screw
+    - zipper
+    - transistor
+    - wood
 
 
 OPTIMIZER:

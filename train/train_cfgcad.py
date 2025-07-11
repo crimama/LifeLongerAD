@@ -111,7 +111,7 @@ def safe_wandb_log(metrics, retry_count=3):
             else:
                 _logger.error("Failed to log to wandb after all retries")
 
-def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_interval: int, epoch, epochs, savedir, cfg, drift_monitor, cl_manager) -> dict:
+def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_interval: int, epoch, epochs, savedir, cfg, drift_monitor, cl_manager=None) -> dict:
     
     def collect_gradients(cfg, model, all_gradients, epoch, step):
         try:
@@ -220,14 +220,15 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
             Input = {'image':images,'clslabel':class_labels}
             data_time_m.update(time.time() - end)
             
-            # Training with Enhanced Continual Learning
-            cl_manager.save_old_tasks_weights() # 가중치 저장
+            # Training with Enhanced Continual Learning (only if cl_manager exists)
+            if cl_manager is not None:
+                cl_manager.save_old_tasks_weights() # 가중치 저장
             
             outputs = model(Input) 
             
-            # Enhanced Knowledge Distillation Logic using teacher model
+            # Enhanced Knowledge Distillation Logic using teacher model (only if cl_manager exists)
             distillation_loss = 0.0
-            if cl_manager.knowledge_distillation_enabled and cl_manager.has_previous_knowledge:
+            if cl_manager is not None and cl_manager.knowledge_distillation_enabled and cl_manager.has_previous_knowledge:
                 # Calculate knowledge distillation loss using teacher model
                 distillation_loss = cl_manager.get_distillation_loss(
                     student_outputs=outputs, 
@@ -237,7 +238,11 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
                 )
             
             # Calculate loss with knowledge distillation support
-            loss = model.criterion(outputs, Input, skip=False, cl_manager=cl_manager)
+            if cl_manager is not None:
+                loss = model.criterion(outputs, Input, skip=False, cl_manager=cl_manager)
+            else:
+                # Standard training without continual learning
+                loss = model.criterion(outputs, Input, skip=False)
             
             # Add distillation loss to total loss if available
             if distillation_loss > 0:
@@ -253,10 +258,16 @@ def train(model, dataloader, testloader, optimizer, scheduler, accelerator, log_
             svd_losses_m.update(loss['svd_loss'])
             distillation_losses_m.update(loss.get('distillation_loss', 0))
             
-            cl_manager.apply_mask_on_grad() # 향상된 그래디언트 마스크 적용 (점진적 적응 포함)
+            # Apply continual learning masks only if cl_manager exists
+            if cl_manager is not None:
+                cl_manager.apply_mask_on_grad()
+            
             optimizer.step()
-            cl_manager.calculate_importance() # 중요도 계산 (연결 강도 업데이트 포함)
-            cl_manager.recover_old_tasks_weights() # 이전 작업 가중치 복구
+            
+            # Continual learning operations only if cl_manager exists
+            if cl_manager is not None:
+                cl_manager.calculate_importance() # 중요도 계산 (연결 강도 업데이트 포함)
+                cl_manager.recover_old_tasks_weights() # 이전 작업 가중치 복구
             
             batch_time_m.update(time.time() - end)        
             # Enhanced Logging 
@@ -380,32 +391,49 @@ def fit(
         ## Enhanced Continual Learning Configuration
         sparsity_config = cfg.CONTINUAL.method.params        
         
-        # Initialize enhanced CL manager with new features
-        cl_manager = CL_Transformer(
-            model=model, 
-            device=accelerator.device, 
-            sparsity_config=sparsity_config, 
-            replace_percentage=0.2,
-            use_neighbor_mask=cfg.CONTINUAL.get('use_neighbor_mask', True),
-            neighbor_radius=cfg.CONTINUAL.get('neighbor_radius', 1),
-            previous_task_grad_decay=cfg.CONTINUAL.get('previous_task_grad_decay', 0.05)
-        )
+        # Initialize enhanced CL manager only if continual method is not 'no'
+        cl_manager = None
+        # continual_method = cfg.CONTINUAL.method.get('name', 'no')
+        continual_method = 'no'
+
         
-        cl_manager.set_init_network_weight()
-        
-        # Enable knowledge distillation if configured
-        if cfg.CONTINUAL.get('use_knowledge_distillation', True):
-            cl_manager.enable_knowledge_distillation()
-            print(f"✓ CL Manager KD enabled: {cl_manager.knowledge_distillation_enabled}")
+        if continual_method != 'no':
+            cl_manager = CL_Transformer(
+                model=model, 
+                device=accelerator.device, 
+                sparsity_config=sparsity_config, 
+                replace_percentage=0.2,
+                use_neighbor_mask=cfg.CONTINUAL.get('use_neighbor_mask', True),
+                neighbor_radius=cfg.CONTINUAL.get('neighbor_radius', 1),
+                previous_task_grad_decay=cfg.CONTINUAL.get('previous_task_grad_decay', 0.05)
+            )
             
-            # Note: The criterion knowledge distillation is handled within the CL manager
-            # No need to call enable_knowledge_distillation on criterion separately
-            print(f"✓ Knowledge distillation will be handled by CL Manager")
+            cl_manager.set_init_network_weight()
+            
+            # Enable knowledge distillation if configured
+            if cfg.CONTINUAL.get('use_knowledge_distillation', True):
+                cl_manager.enable_knowledge_distillation()
+                print(f"✓ CL Manager KD enabled: {cl_manager.knowledge_distillation_enabled}")
+                
+                # Note: The criterion knowledge distillation is handled within the CL manager
+                # No need to call enable_knowledge_distillation on criterion separately
+                print(f"✓ Knowledge distillation will be handled by CL Manager")
+            else:
+                print("Info: Knowledge distillation disabled by config")
+                
+            _logger.info(f"Enhanced CL Manager initialized with method: {continual_method}")
         else:
-            print("Info: Knowledge distillation disabled by config")
-        
+            _logger.info("Continual method is 'no' - using standard training without DST")
+
         epoch_time_m = AverageMeter()
         end = time.time() 
+
+        ### TEMP 
+        weight_dir = "/Volume/VAD/LifeLongerAD_cu121/results/CFGCAD/MVTecAD/sparse32_no_no-15_1_with_1_step-Continual_True-online_False/seed_42/model_weight/['grid', 'carpet', 'cable', 'zipper', 'wood', 'tile', 'metal_nut', 'transistor', 'bottle', 'leather', 'pill', 'hazelnut', 'toothbrush', 'capsule', 'screw']_model.pth"
+        weight = torch.load(weight_dir)
+        model.load_state_dict(weight['model_state_dict'])
+        _logger.info('Model loaded')
+        ###
 
         optimizer = __import__('torch.optim',fromlist='optim').__dict__[cfg.OPTIMIZER.opt_name](model.parameters(), lr=cfg.OPTIMIZER.lr, **cfg.OPTIMIZER.params)        
         if cfg.SCHEDULER.name is not None:                        
@@ -419,8 +447,9 @@ def fit(
                 _logger.info("Shutdown requested. Exiting task loop...")
                 break
             
-            # Enhanced SCL with knowledge preservation
-            cl_manager.reset_importance() # 새 작업 시작 시 중요도 리셋
+            # Enhanced SCL with knowledge preservation (only if cl_manager exists)
+            if cl_manager is not None:
+                cl_manager.reset_importance() # 새 작업 시작 시 중요도 리셋
             
             best_score = 0.0
             if (n_task == 0) or (cfg.CONTINUAL.continual==False):
@@ -428,9 +457,13 @@ def fit(
             
             cleanup_gpu_memory()
             _logger.info(f"Current Class Name : {current_class_name}")        
-            _logger.info(f"Enhanced CL Features: Neighbor Mask={cl_manager.use_neighbor_mask}, "
-                        f"KD={cl_manager.knowledge_distillation_enabled}, "
-                        f"Grad Decay={cl_manager.previous_task_grad_decay}")
+            
+            if cl_manager is not None:
+                _logger.info(f"Enhanced CL Features: Neighbor Mask={cl_manager.use_neighbor_mask}, "
+                            f"KD={cl_manager.knowledge_distillation_enabled}, "
+                            f"Grad Decay={cl_manager.previous_task_grad_decay}")
+            else:
+                _logger.info("Standard training mode - no continual learning features")
                 
             # Init optimzier & SCheduler         
             # Init Dataloader 
@@ -469,8 +502,8 @@ def fit(
                         epoch_time_m.update(time.time() - end)
                         end = time.time()
                         
-                    # Enhanced Drop/Grow with Neighbor Mask Strategy
-                    if epoch < epochs - 1:
+                    # Enhanced Drop/Grow with Neighbor Mask Strategy (only if cl_manager exists)
+                    if cl_manager is not None and epoch < epochs - 1:
                         _logger.info(f"Applying enhanced Drop/Grow with Neighbor Mask (radius={cl_manager.neighbor_radius})")
                         cl_manager.drop()
                         cl_manager.grow()  # Now includes neighbor mask strategy
@@ -503,7 +536,7 @@ def fit(
                     cleanup_gpu_memory()
                     continue
         
-            if cfg.CONTINUAL.continual:
+            if cfg.CONTINUAL.continual and cl_manager is not None:
                 try:
                     # Enhanced Continual method with knowledge preservation
                     _logger.info('Enhanced Continual Learning consolidation with knowledge preservation')            
@@ -552,14 +585,14 @@ def fit(
                 except Exception as e:
                     _logger.error(f"Continual learning evaluation failed: {e}")
             else:
-                # Reinitialize model for non-continual learning
+                # Reinitialize model for non-continual learning or when cl_manager is None
                 try:
                     model  = __import__('models').__dict__[cfg.MODEL.method](
                         backbone    = cfg.MODEL.backbone,
                         **cfg.MODEL.params
                         ).cuda()
                     model = accelerator.prepare(model)
-                    _logger.info('Model init')
+                    _logger.info('Model reinitialized for standard training')
                 except Exception as e:
                     _logger.error(f"Model reinitialization failed: {e}")
                     
